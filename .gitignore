@@ -1,0 +1,38 @@
+# --- Python ------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# --- Datos de la aplicación -------------------------------------------
+# La DB se reconstruye con `python -m app.db.migrations`
+data/*.db
+data/*.db-wal
+data/*.db-shm
+
+# Logs reales del entorno: nunca en git (pueden contener datos sensibles)
+logs/*
+!logs/.gitkeep
+
+# --- Configuración local (puede contener rutas del host) --------------
+.env
+config.local.yaml
+
+# --- Reportes generados ------------------------------------------------
+exports/*
+!exports/.gitkeep
+
+# --- Tests / tooling ---------------------------------------------------
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# --- Editores / SO -----------------------------------------------------
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
