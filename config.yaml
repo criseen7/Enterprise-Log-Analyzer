@@ -1,0 +1,55 @@
+# Enterprise Log Analyzer — configuración
+#
+# Las variables de entorno TIENEN prioridad sobre estos valores.
+# Patrón: ELA_<CAMPO>, en mayúsculas. Ver .env.example para la lista completa.
+# Copia este archivo a config.local.yaml para overrides locales (no se versiona).
+
+paths:
+  log_dir: logs
+  db_path: data/app.db
+  export_dir: exports
+  patterns_dir: app/parser/patterns
+
+ingest:
+  # Segundos entre polls cuando no usamos eventos del watchdog.
+  poll_interval_seconds: 5
+  # Ventana de calma antes de procesar: evita leer un archivo a medio escribir.
+  debounce_seconds: 2.0
+  # Tamaño de lectura por chunk. Los logs nunca deben cargarse completos en memoria.
+  chunk_bytes: 1048576
+  # Zona horaria asumida cuando el timestamp del log no la declara.
+  default_timezone: UTC
+  # Globs de archivos a vigilar.
+  include_patterns:
+    - "*.log"
+
+db:
+  # Un solo escritor (el watcher). Los lectores concurrentes son seguros gracias a WAL.
+  journal_mode: wal
+  # Milisegundos que SQLite espera un lock antes de fallar.
+  busy_timeout_ms: 5000
+  # NORMAL es seguro con WAL: sobrevive a crash de proceso, no necesariamente de SO.
+  synchronous: NORMAL
+  # Max GB que puede ocupar la DB antes de exigirCompactación manual.
+  max_size_gb: 4
+
+analysis:
+  # Severidad mínima (40 = WARN) para que un evento sea candidato a incidente.
+  min_incident_severity: 40
+  # Ventana temporal para evaluar umbrales.
+  window_minutes: 15
+  # Eventos del mismo fingerprint dentro de la ventana para abrir incidente.
+  incident_threshold: 50
+  # Silencio antes de volver a notificar el mismo fingerprint.
+  cooldown_minutes: 10
+  # Z-score mínimo para marcar un pico horario como anomalía.
+  anomaly_zscore: 3.0
+  # Mínimo de eventos por bucket para que la anomalía sea estadísticamente válida.
+  anomaly_min_samples: 5
+
+ui:
+  page_title: "Enterprise Log Analyzer"
+  page_icon: "📊"
+  # TTL de la caché de queries del dashboard.
+  cache_ttl_seconds: 30
+  default_page_size: 100

@@ -1,0 +1,5 @@
+# Herramientas de desarrollo y test.
+# pytest corre los tests, pero los tests están escritos con unittest (stdlib)
+# para que sean ejecutables sin instalar nada: `python -m unittest discover tests`.
+
+pytest==8.3.4
