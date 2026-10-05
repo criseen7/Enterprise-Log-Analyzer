@@ -50,6 +50,9 @@ CREATE TABLE IF NOT EXISTS events (
     -- 0 = línea no reconocida por ningún patrón. Se conserva y se reporta:
     -- descartar en silencio hace la pérdida de datos invisible.
     parsed_ok      INTEGER NOT NULL DEFAULT 1,
+    -- Motivo del fallo de parseo. Sin esto, una cobertura del 80% no es
+    -- accionable: hay que poder leer por qué falló.
+    parse_error    TEXT,
     UNIQUE (file_id, offset)
 );
 
@@ -57,7 +60,7 @@ CREATE INDEX IF NOT EXISTS idx_events_ts          ON events (timestamp_utc);
 CREATE INDEX IF NOT EXISTS idx_events_fp          ON events (fingerprint);
 CREATE INDEX IF NOT EXISTS idx_events_sev_ts      ON events (severity, timestamp_utc);
 CREATE INDEX IF NOT EXISTS idx_events_service_ts  ON events (service, timestamp_utc);
-CREATE INDEX IF NOT EXISTS idx_events_parsed      ON events (parsed_ok);
+CREATE INDEX IF NOT EXISTS idx_events_parsed      ON events (parsed_ok, parse_error);
 
 -- Incidentes: un registro por fingerprint problemático, no por evento.
 CREATE TABLE IF NOT EXISTS incidents (
