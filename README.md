@@ -4,7 +4,8 @@ Plataforma de observabilidad y análisis de logs para entornos empresariales. Ca
 de forma incremental, los normaliza, detecta errores críticos, agrupa patrones
 recurrentes y expone métricas en un dashboard interactivo con exportación de reportes.
 
-**Estado:** en desarrollo activo. Fase 0 (cimientos) completada — ver [docs/PLAN.md](docs/PLAN.md).
+**Estado:** en desarrollo activo. Fases 0–1 completadas (86 tests) — ver
+[docs/PLAN.md](docs/PLAN.md).
 
 ---
 
@@ -137,6 +138,10 @@ O en un solo paso: `make demo`.
 ```bash
 make test        # o: python -m unittest discover tests -v
 make check-db    # debe imprimir: journal_mode = wal
+
+# Golden files: falla si la salida del parser cambió sin regenerarlos.
+python -m tests.regenerate_golden --check
+python -m tests.regenerate_golden   # regenera (revisar el diff antes de aceptar)
 ```
 
 ---
@@ -163,8 +168,9 @@ make check-db    # debe imprimir: journal_mode = wal
 2. **Ingesta idempotente** — offsets, rotación, ensamblado multilínea (stack traces Java).
 3. **Detección de errores críticos** — `timeout`, `connection refused`, `null pointer`,
    `out of memory`, `failed login`, con categorías y severidad normalizada.
-4. **Patrones recurrentes** — fingerprint por mensaje normalizado (UUIDs, IPs, hex y
-   dígitos y UUIDs colapsan a placeholders) para agrupar lo que en realidad es el mismo error.
+4. **Patrones recurrentes** — fingerprint por mensaje normalizado (dígitos, UUIDs,
+   IPs y hex colapsan a placeholders) para agrupar lo que en realidad es el mismo
+   error.
 5. **Dashboard** — KPIs, errores por hora, top errores, timeline, heatmap día×hora.
 6. **Alertas** — incidentes con dedup por fingerprint y cooldown; export CSV/HTML.
 7. **Métricas de la propia herramienta** — `ingest_runs` visible para demostrar que
@@ -177,6 +183,33 @@ make check-db    # debe imprimir: journal_mode = wal
 - Correlación de eventos
 - Búsqueda estilo Splunk
 - Export PDF · auth · multi-tenancy · PostgreSQL · Prometheus
+
+---
+
+## Formatos soportados
+
+Cada formato es **un archivo YAML** en `app/parser/patterns/`. Agregar IIS o
+WebLogic es agregar un archivo, no escribir Python — ver
+[ADR-002](docs/decisions/ADR-002-parsers-declarativos.md).
+
+| Formato | `kind` | Estado |
+|---|---|---|
+| Apache / Nginx (CLF) | `regex` | ✅ implementado |
+| JSON (una línea por registro) | `json` | ✅ implementado |
+| IIS | `regex` | backlog — requiere ensamblado multilínea |
+| WebLogic | `regex` | backlog — requiere ensamblado multilínea |
+
+Un patrón `regex` **debe** declarar el grupo con nombre `ts`; `level`, `service`,
+`logger`, `status` y `message` son opcionales. El contrato se verifica al cargar
+los patrones, no durante la ingesta: un YAML incompleto rompe el arranque.
+
+Para JSON se declaran listas de claves candidatas por campo, con rutas de punto:
+
+```yaml
+fields:
+  level: [level, levelname, severity, loglevel, log.level]
+  message: [message, msg, '@message', log, log.message]
+```
 
 ---
 
@@ -195,20 +228,28 @@ dashboard como "cobertura de parseo", en lugar de descartarse en silencio.
 
 ## Qué aprendí
 
-Las decisiones están en [`docs/decisions/`](docs/decisions/). Lo ya verificado en
-la Fase 0:
+Las decisiones están en [`docs/decisions/`](docs/decisions/). Lo ya verificado:
 
+**Fase 0 — concurrencia (ADR-001)**
 - **WAL no es un detalle de configuración**: cambia el modelo de concurrencia entero.
   Un test de estrés *no* lo demuestra (SQLite aguanta escrituras cortas incluso en
   `DELETE`); lo demuestra el escenario determinista de un lector con transacción
   abierta bloqueando el `COMMIT` del escritor.
-- **La idempotencia se diseña antes que el watcher**, no después. El orden importa.
 - **`executescript()` hace un COMMIT implícito**: envolverlo en una transacción
-  explícita falla.
+  explícita falla con `cannot commit - no transaction is active`.
+
+**Fase 1 — parsing (ADR-002)**
+- **`re.VERBOSE` es obligatorio** para escribir regex legibles en YAML: sin él, cada
+  salto de línea del bloque se interpreta como literal.
+- **`strptime` con `%b` depende de `LC_TIME`**: un contenedor con locale `es_ES`
+  deja de entender `Oct`. Se sustituye el mes por su número antes de parsear.
+- **Un access log no tiene nivel**: CLF solo da el código HTTP. Un 2xx se queda en
+  `UNKNOWN` porque no es un error; inventarle un nivel sería mentir.
+- **La idempotencia se diseña antes que el watcher**, no después. El orden importa.
 - **Normalizar el timestamp es un problema de datos, no de formato.**
 
-Los siguientes puntos del plan (idempotencia en la práctica, timezone, multilínea,
-`cache_data`) se documentarán en `docs/pitfalls.md` al sealing de las fases 1–5.
+Los siguientes puntos del plan (idempotencia en la práctica, multilínea,
+`cache_data`) se documentarán en `docs/pitfalls.md` al cerrar las fases 2–5.
 
 ---
 
