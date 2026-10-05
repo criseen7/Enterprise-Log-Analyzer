@@ -155,20 +155,37 @@ docs/decisions/ADR-00N-*.md     artefactos de aprendizaje
 
 ---
 
-### Fase 1 — Parser
+### Fase 1 — Parser ✅ *completada 2026-10-05*
 
-**Tareas:** `PatternSpec` (name, regex, timestamp_formats, level_map, priority) ·
-registry con *named groups* (`ts` `level` `service` `logger` `message`) ·
-`normalization.py` (tz-aware → UTC, nivel→severity) · patterns `apachev2.yaml` + `json.yaml` ·
-golden tests
+- [x] `severity.py` — escala canónica (0..50) + alias de syslog / Java / IIS
+- [x] `normalization.py` — timestamp → UTC, meses en inglés independientes de locale
+- [x] `registry.py` — `PatternSpec`, carga validada, `detect()`, `parse_line()`
+- [x] `patterns/apachev2.yaml` + `patterns/json.yaml`
+- [x] Fixtures: 2 de Apache, 2 de JSON (tz mixta, claves alternativas)
+- [x] Golden files en `tests/expected/` + regenerador con `--check`
+- [x] Tests del parser — **38 tests**
+- [x] ADR-002 (parsers declarativos)
 
-**Aceptación:**
-- ≥95% de líneas parseadas correctamente en `tests/fixtures/`
-- Las líneas no parseadas se persisten con `parsed_ok=0`, nunca se descartan
-- Test de tz mixta: fixtures en UTC y `America/Mexico_City` → mismo instante tras normalizar
+**Aceptación — verificada:**
+- [x] Ratio de parseo **100%** en los 4 fixtures (42 líneas) · umbral exigido 95%
+- [x] Líneas no parseadas conservadas con `parsed_ok=0` y motivo en `parse_error`
+- [x] Timestamps en UTC; el mismo instante escrito de 3 formas → un solo valor
+- [x] `source_tz` siempre registrado, incluidas las zonas asumidas
+- [x] Un patrón mal configurado rompe el arranque, no la ingesta
 
-> Alcance deliberado: **Apache + JSON** en el MVP. JSON es trivial con el registry y
-> demuestra que D2 escala a los 4 formatos del README.
+**Desviaciones y hallazgos registrados durante la implementación:**
+- `re.VERBOSE` es obligatorio para escribir regex legibles en YAML: sin él, cada
+  salto de línea del bloque se interpreta como literal y no matchea nada.
+- `strptime` con `%b` depende de `LC_TIME`: un contenedor con locale `es_ES` deja
+  de entender `Oct`. Se sustituye el mes por su número antes de parsear (`%m`).
+- Un candidato de clave JSON que resuelve a un dict se salta; si no, `log` gana a
+  `log.message` y el mensaje es el dict serializado.
+- `default_timezone` ausente en un patrón significa "hereda de config.yaml".
+  Declararlo sobreescribiría la config global en silencio.
+- **WebLogic sigue sin implementarse a propósito.** Su dificultad real es el
+  ensamblado multilínea de stack traces (Fase 2), no el regex. Implementarlo antes
+  produciría un parser que pasa los tests y corrompe los datos en producción.
+  `PatternSpec.multiline` queda reservado para la Fase 2.
 
 ---
 
