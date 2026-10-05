@@ -1,0 +1,11 @@
+{"@timestamp":"2026-10-05T15:12:03.114Z","level":"INFO","service":"auth-api","logger":"com.acme.auth.LoginController","message":"autenticación exitosa","user_id":"u-10293"}
+{"@timestamp":"2026-10-05T15:12:07.882Z","level":"INFO","service":"auth-api","logger":"com.acme.auth.LoginController","message":"autenticación exitosa","user_id":"u-10294"}
+{"@timestamp":"2026-10-05T15:12:19.401Z","level":"WARNING","service":"auth-api","logger":"com.acme.auth.TokenFilter","message":"token expirado, renovando","user_id":"u-10293"}
+{"@timestamp":"2026-10-05T15:12:31.007Z","level":"ERROR","service":"auth-api","logger":"com.acme.auth.TokenFilter","message":"fallo la validación del token: firma expirada"}
+{"@timestamp":"2026-10-05T15:12:31.220Z","level":"ERROR","service":"auth-api","logger":"com.acme.auth.TokenFilter","message":"fallo la validación del token: firma expirada"}
+{"@timestamp":"2026-10-05T15:13:02.551Z","level":"CRITICAL","service":"db-pool","logger":"com.acme.db.PoolMonitor","message":"pool de conexiones agotado: 0 disponibles de 50"}
+{"@timestamp":"2026-10-05T15:13:45.900Z","level":"FATAL","service":"db-pool","logger":"com.acme.db.PoolMonitor","message":"out of memory: no se puede asignar el pool de conexiones"}
+{"@timestamp":"2026-10-05T15:14:10.112Z","level":"DEBUG","service":"order-service","logger":"com.acme.order.Repository","message":"SELECT ejecutado en 42ms"}
+{"@timestamp":"2026-10-05T15:14:33.775Z","level":"ERROR","service":"order-service","logger":"com.acme.order.Repository","message":"connection refused a jdbc:postgresql://db-primary:5432/orders"}
+{"@timestamp":"2026-10-05T15:14:34.010Z","level":"ERROR","service":"order-service","logger":"com.acme.order.Repository","message":"connection refused a jdbc:postgresql://db-replica:5432/orders"}
+{"@timestamp":"2026-10-05T15:14:34.256Z","level":"ERROR","service":"order-service","logger":"com.acme.order.Repository","message":"connection refused a jdbc:postgresql://db-replica:5432/orders"}

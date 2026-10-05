@@ -1,0 +1,7 @@
+{"timestamp":"2026-10-05T09:12:03-06:00","levelname":"INFO","app":"wls-cluster-1","msg":"deploy begun: version 4.2.1"}
+{"timestamp":"2026-10-05T15:12:04Z","levelname":"INFO","app":"wls-cluster-1","msg":"deploy begun: version 4.2.1"}
+{"time":"2026-10-05T21:12:11+02:00","severity":"NOTICE","application":"wls-cluster-2","message":"nodo secundario sincronizado"}
+{"eventTime":"2026-10-05 09:13:02","loglevel":"SEVERE","service_name":"wls-cluster-2","message":"connection timeout after 30000ms","thread":"[pool-3-thread-7]"}
+{"event_time":"2026-10-05 09:13:31","level":"SEVERE","service":"wls-cluster-2","logger":"weblogic.servlet.internal.WebAppServletContext","msg":"connection timeout after 30000ms"}
+{"event_time":"2026-10-05 09:14:00","level":"WARNING","service":"wls-cluster-2","logger":"weblogic.healthcheck","msg":"intento 1 de 3 para recuperar la conexión"}
+{"@timestamp":"2026-10-05T21:14:22.881Z","@level":"SEVERE","@message":"connection timeout after 30000ms","resource":{"attributes":{"service":{"name":"wls-cluster-2"}}},"log":{"logger":"weblogic.database.ConnectionPool"}}
