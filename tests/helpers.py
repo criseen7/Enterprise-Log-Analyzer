@@ -11,6 +11,10 @@ from app.config import Settings, load_settings
 from app.db.connection import connect
 from app.db.migrations import migrate
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+PATTERNS_DIR = REPO_ROOT / "app" / "parser" / "patterns"
+FIXTURES_DIR = Path(__file__).parent / "fixtures"
+
 
 class TempDbTestCase(TestCase):
     """Base con una DB temporal ya migrada y un log_dir vacío.

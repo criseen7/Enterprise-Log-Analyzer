@@ -221,6 +221,35 @@ class MigrationTests(TempDbTestCase):
         with self.assertRaises(sqlite3.IntegrityError):
             conn.execute("INSERT INTO events (file_id, offset, raw_line) VALUES (1, 0, 'a')")
 
+    def test_parse_ratio_is_queryable(self):
+        """La cobertura de parseo se mide en SQL, no en Python.
+
+        Es el indicador que hace visible la pérdida de datos: si cae del 100%,
+        algo dejó de encajar en un formato y hay que ir a mirar `parse_error`.
+        """
+        migrate(self.db_path)
+        conn = self.connect()
+        conn.execute(_FILE_ROW)
+        conn.executemany(
+            "INSERT INTO events (file_id, offset, raw_line, parsed_ok, parse_error) "
+            "VALUES (1, ?, ?, ?, ?)",
+            [
+                (0, "ok", 1, None),
+                (1, "ok", 1, None),
+                (2, "basura", 0, "ningún patrón coincide"),
+            ],
+        )
+        total, ok = conn.execute(
+            "SELECT COUNT(*), SUM(parsed_ok) FROM events"
+        ).fetchone()[:2]
+        self.assertEqual((total, ok), (3, 2))
+        reasons = [
+            r[0] for r in conn.execute(
+                "SELECT DISTINCT parse_error FROM events WHERE parsed_ok = 0"
+            )
+        ]
+        self.assertEqual(reasons, ["ningún patrón coincide"])
+
     def test_indexes_support_the_dashboard_queries(self):
         migrate(self.db_path)
         conn = self.connect()
