@@ -1,0 +1,47 @@
+# Apache / Nginx — Combined Log Format (CLF)
+#
+#   host ident user [ts] "request" status bytes "referer" "agent"
+#
+# Ejemplo de línea:
+#   10.0.0.7 - - [05/Oct/2026:14:03:22 -0600] "GET /api/orders HTTP/1.1" 500 1284 "-" "curl/8.5.0"
+
+name: apachev2
+kind: regex
+priority: 50
+description: Apache/Nginx Combined Log Format
+
+# Los meses de Apache siempre van en inglés, así que se sustituyen por su número
+# antes de strptime: parsear con %b haría depender el resultado del locale del
+# proceso, y un contenedor con LC_TIME=es_ES deja de entender "Oct".
+# Por eso el formato declara %m y no %b.
+english_months: true
+
+timestamp:
+  formats:
+    - '%d/%m/%Y:%H:%M:%S %z'
+  # CLF siempre trae offset (%z), así que default_timezone solo aplica si una
+  # variante del formato lo omite. Se deja heredar de config.yaml.
+
+regex: |
+  ^(?P<client>\S+)\s+(?P<ident>\S+)\s+(?P<user>\S+)\s+
+  \[(?P<ts>[^\]]+)\]\s+
+  "(?P<method>[A-Z]+)\s+(?P<path>[^"]*?)(?:\s+(?P<protocol>\S+))?"\s+
+  (?P<status>\d{3})\s+
+  (?P<size>\S+)
+  (?:\s+"(?P<referer>[^"]*)"\s+"(?P<agent>[^"]*)")?
+  \s*$
+
+# VERBOSE permite escribir el regex en varias líneas legibles: sin él, cada
+# salto de línea del bloque YAML se interpretaría como un literal y no
+#|matchearía nada.
+flags:
+  - verbose
+
+# CLF no tiene nivel: el código HTTP es lo único que separa un 500 de un 200.
+# Sin esto, un access log con 3.000 errores 500 quedaría todo en UNKNOWN y el
+# dashboard de severidad no serviría para nada.
+status_levels:
+  - { from: 500, level: ERROR }
+  - { from: 400, level: WARN }
+
+message_template: '{method} {path} -> {status}'

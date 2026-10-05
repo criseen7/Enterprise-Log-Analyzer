@@ -1,0 +1,74 @@
+# Logs estructurados JSON (una línea por objeto).
+#
+# No es un formato único: cada servicio llama a las cosas de una forma. En vez
+# de una regex por servicio, se declaran las claves candidatas de cada campo y
+# gana la primera que exista. Añadir un servicio que usa `evt.time` es agregar
+# una línea a esta lista.
+
+name: json
+kind: json
+priority: 40
+description: Logs JSON de una línea por registro
+
+timestamp:
+  formats:
+    - iso8601          # cubre 2026-10-05T14:03:22.481Z y 2026-10-05T08:03:22-06:00
+    - '%Y-%m-%d %H:%M:%S'
+    - '%Y-%m-%dT%H:%M:%S'
+  # No se declara default_timezone a propósito: así el patrón hereda
+  # `ingest.default_timezone` de config.yaml. Declararlo aquí lo sobreescribiría
+  # en silencio y volvería inútil la config global.
+
+default_level: INFO
+
+fields:
+  ts:
+    - '@timestamp'
+    - timestamp
+    - time
+    - ts
+    - eventTime
+    - event_time
+    - '@time'
+    - datetime
+  level:
+    - level
+    - levelname
+    - severity
+    - loglevel
+    - log_level
+    - '@level'
+    - log.level
+    - fields.level
+  message:
+    - message
+    - msg
+    - '@message'
+    # `log` primero porque en CloudWatch es un string suelto; si viene anidado
+    # (un dict), el registry lo salta y cae en `log.message`.
+    - log
+    - log.message
+    - event
+    - text
+    - fields.message
+  service:
+    - service
+    - service_name
+    - application
+    - app
+    - app_name
+    - logger_name
+    - service.name
+    - resource.attributes.service.name
+  logger:
+    - logger
+    - logger_name
+    - channel
+    - thread
+    - class
+    - log.logger
+  status:
+    - status
+    - status_code
+    - http.status_code
+    - response.status_code
