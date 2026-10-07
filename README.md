@@ -4,7 +4,7 @@ Plataforma de observabilidad y análisis de logs para entornos empresariales. Ca
 de forma incremental, los normaliza, detecta errores críticos, agrupa patrones
 recurrentes y expone métricas en un dashboard interactivo con exportación de reportes.
 
-**Estado:** en desarrollo activo. Fases 0–1 completadas (86 tests) — ver
+**Estado:** en desarrollo activo. Fases 0–2 completadas (112 tests) — ver
 [docs/PLAN.md](docs/PLAN.md).
 
 ---
@@ -127,7 +127,11 @@ python -m app.db.migrations
 # 2. Generar un dataset sintético para el demo
 python tools/generate_sample_logs.py
 
-# 3. Lanzar el dashboard
+# 3. Ingerir los logs (idempotente: una 2ª pasada inserta 0)
+python -m app.ingest --once
+python -m app.ingest --status     # cobertura de parseo y últimas pasadas
+
+# 4. Lanzar el dashboard (Fase 4)
 streamlit run app/ui/app.py
 ```
 
@@ -136,7 +140,7 @@ O en un solo paso: `make demo`.
 ### Verificar la instalación
 
 ```bash
-make test        # o: python -m unittest discover tests -v
+make test        # o: python -m unittest discover -s tests -t .
 make check-db    # debe imprimir: journal_mode = wal
 
 # Golden files: falla si la salida del parser cambió sin regenerarlos.
@@ -178,7 +182,7 @@ python -m tests.regenerate_golden   # regenera (revisar el diff antes de aceptar
 
 ### Post-MVP (backlog, ver [docs/PLAN.md](docs/PLAN.md) §6)
 
-- Formatos IIS y WebLogic (y el problema de multilínea de Oracle)
+- Formato IIS
 - Anomalías avanzadas (IQR, estacionalidad)
 - Correlación de eventos
 - Búsqueda estilo Splunk
@@ -196,8 +200,8 @@ WebLogic es agregar un archivo, no escribir Python — ver
 |---|---|---|
 | Apache / Nginx (CLF) | `regex` | ✅ implementado |
 | JSON (una línea por registro) | `json` | ✅ implementado |
-| IIS | `regex` | backlog — requiere ensamblado multilínea |
-| WebLogic | `regex` | backlog — requiere ensamblado multilínea |
+| WebLogic / java.util.logging | `regex` | ✅ implementado (multilínea) |
+| IIS | `regex` | backlog |
 
 Un patrón `regex` **debe** declarar el grupo con nombre `ts`; `level`, `service`,
 `logger`, `status` y `message` son opcionales. El contrato se verifica al cargar
@@ -248,8 +252,28 @@ Las decisiones están en [`docs/decisions/`](docs/decisions/). Lo ya verificado:
 - **La idempotencia se diseña antes que el watcher**, no después. El orden importa.
 - **Normalizar el timestamp es un problema de datos, no de formato.**
 
-Los siguientes puntos del plan (idempotencia en la práctica, multilínea,
-`cache_data`) se documentarán en `docs/pitfalls.md` al cerrar las fases 2–5.
+**Fase 2 — ingesta (ADR-003)**
+- **La ruta no es identidad de archivo.** `UNIQUE(path)` da la sensación de ser
+  correcto hasta que llega `copytruncate`: la ruta se queda, el offset también, y lo
+  nuevo queda *detrás* de ese offset — la ingesta dice "0 líneas nuevas" mientras el
+  archivo crece. Identidad = `(inode, generation)`.
+- **El orden de operaciones es la decisión.** Resolver → leer → insertar → y sólo
+  entonces avanzar `last_offset`. Un offset adelantado sin eventos es pérdida
+  irreversible; el orden inverso hace el fallo recuperable.
+- **Un regex multilínea en YAML falla en silencio sin `re.VERBOSE`.** No hay error de
+  sintaxis: hay saltos de línea tratados como literales y el síntoma es "ningún
+  patrón coincide". Apache declaraba `flags:`, WebLogic no, y no cuadraba.
+- **No se puede ensamblar multilínea a ciegas.** Pegar líneas a un registro JSON lo
+  invalida y se pierde el evento entero. El ensamblado es una decisión del patrón
+  (`multiline: true`), no del lector.
+- **El orden alfabético del descubrimiento cambia el estado.** `app.log` se procesa
+  antes que `app.log.1`; sin reactivar `is_active` en la rama de rename, el archivo
+  vivo aparecía como inactivo.
+
+---
+
+Los siguientes puntos del plan (`cache_data`, anomalías) se documentarán en
+`docs/pitfalls.md` al cerrar las fases 3–5.
 
 ---
 
