@@ -41,15 +41,22 @@ class PathsConfig:
 
 @dataclass(frozen=True)
 class IngestConfig:
+    # Globs de archivos a vigilar, relativos a `paths.log_dir`.
+    #
+    # `*.log.*` entra a propósito: los rotados se reconocen por inode y no se
+    # reingieren, y sin ellos una rotación sería invisible hasta el arranque
+    # siguiente. Las demás extensiones quedan fuera: un directorio de logs no es
+    # un contenedor arbitrario y su contenido depende del usuario.
+    include_patterns: tuple[str, ...] = field(
+        default=("*.log", "*.log.*"),
+        metadata={"env": "ELA_INCLUDE_PATTERNS"},
+    )
     poll_interval_seconds: float = field(
         default=5.0, metadata={"env": "ELA_POLL_INTERVAL_SECONDS"}
     )
     debounce_seconds: float = field(default=2.0, metadata={"env": "ELA_DEBOUNCE_SECONDS"})
     chunk_bytes: int = field(default=1_048_576, metadata={"env": "ELA_CHUNK_BYTES"})
     default_timezone: str = field(default="UTC", metadata={"env": "ELA_DEFAULT_TIMEZONE"})
-    include_patterns: tuple[str, ...] = field(
-        default=("*.log",), metadata={"env": "ELA_INCLUDE_PATTERNS"}
-    )
 
 
 @dataclass(frozen=True)
@@ -121,6 +128,18 @@ def _coerce(raw: str, target: Any) -> Any:
         if lowered in {"0", "false", "no", "off"}:
             return False
         raise ConfigError(f"valor booleano inválido: {raw!r}")
+    if target is Path or (isinstance(target, type) and issubclass(target, Path)):
+        # Sin esto, un override por env de una ruta queda como `str` y revienta
+        # después en `.is_dir()`, que es justo donde ya es tarde para explicar
+        # qué pasó. La ruta se resuelve contra la raíz en `_build_section`, igual
+        # que la que viene del YAML.
+        #
+        # Se comprueba con `issubclass` y no con `is Path`: el default es
+        # `PosixPath`/`WindowsPath`, nunca la clase base.
+        value = Path(raw).expanduser()
+        if not str(value).strip():
+            raise ConfigError(f"ruta de entorno vacía: {raw!r}")
+        return value
     if target is int:
         try:
             return int(raw)
