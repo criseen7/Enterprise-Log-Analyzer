@@ -19,9 +19,11 @@ ingest:
   chunk_bytes: 1048576
   # Zona horaria asumida cuando el timestamp del log no la declara.
   default_timezone: UTC
-  # Globs de archivos a vigilar.
+  # Globs de archivos a vigilar, relativos a paths.log_dir.
+  # `*.log.*` incluye los rotados: se reconocen por inode y no se reingieren.
   include_patterns:
     - "*.log"
+    - "*.log.*"
 
 db:
   # Un solo escritor (el watcher). Los lectores concurrentes son seguros gracias a WAL.
