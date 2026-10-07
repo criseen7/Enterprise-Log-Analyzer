@@ -15,20 +15,33 @@ CREATE TABLE IF NOT EXISTS schema_version (
 );
 
 -- Archivos ingeridos y su posición de lectura.
+--
+-- La identidad de una fila NO es la ruta: es (inode, generation). Ver ADR-003.
+-- La ruta cambia cuando el archivo se renombra (logrotate) y el contenido
+-- sobrevive; el inode sobrevive al rename. Y una rotación por *truncado*
+-- conserva el inode pero cambia el contenido, de ahí la generación.
 CREATE TABLE IF NOT EXISTS log_files (
     id           INTEGER PRIMARY KEY,
-    path         TEXT    NOT NULL UNIQUE,
+    -- Última ruta conocida. Puede no ser la original si el archivo se renombró.
+    path         TEXT    NOT NULL,
     inode        INTEGER,
+    -- 0 = contenido original; cada rotación o truncado incrementa el contador.
+    generation   INTEGER NOT NULL DEFAULT 0,
     size         INTEGER NOT NULL DEFAULT 0,
     -- Offset (bytes) hasta donde ya se leyó. Base de la idempotencia.
+    -- Solo avanza sobre líneas completas: una línea a medio escribir NO se consume.
     last_offset  INTEGER NOT NULL DEFAULT 0,
     -- Tamaño cuando se hizo la última lectura; permite detectar truncamiento.
     last_size    INTEGER NOT NULL DEFAULT 0,
     first_seen   TEXT    NOT NULL,
     last_seen    TEXT    NOT NULL,
     rotated_at   TEXT,
-    is_active    INTEGER NOT NULL DEFAULT 1
+    is_active    INTEGER NOT NULL DEFAULT 1,
+    UNIQUE (inode, generation)
 );
+
+CREATE INDEX IF NOT EXISTS idx_log_files_path    ON log_files (path);
+CREATE INDEX IF NOT EXISTS idx_log_files_active  ON log_files (is_active, path);
 
 CREATE TABLE IF NOT EXISTS events (
     id             INTEGER PRIMARY KEY,
@@ -61,6 +74,7 @@ CREATE INDEX IF NOT EXISTS idx_events_fp          ON events (fingerprint);
 CREATE INDEX IF NOT EXISTS idx_events_sev_ts      ON events (severity, timestamp_utc);
 CREATE INDEX IF NOT EXISTS idx_events_service_ts  ON events (service, timestamp_utc);
 CREATE INDEX IF NOT EXISTS idx_events_parsed      ON events (parsed_ok, parse_error);
+-- El índice de UNIQUE(file_id, offset) lo crea SQLite automáticamente.
 
 -- Incidentes: un registro por fingerprint problemático, no por evento.
 CREATE TABLE IF NOT EXISTS incidents (
