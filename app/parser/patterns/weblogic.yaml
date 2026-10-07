@@ -1,0 +1,56 @@
+# WebLogic / java.util.logging
+#
+# Ejemplo:
+#   05-oct-2026 14:03:22.481 CEST weblogic.database.ConnectionPool   : [pool-1] CONNECTION POOL EXHAUSTED
+#
+# Detalles que hacen este formato distinto a Apache:
+#
+# * El mes viene como texto en inglés abreviado con minúscula ("oct", "sep").
+#   `english_months` lo normaliza antes de strptime, igual que en apachev2.
+# * La zona aparece como `CEST`, `-0700` o `GMT`. Se declara el offset numérico
+#   como formato principal; un nombre de zona abreviado no lo cubre `strptime`,
+#   así que el prefijo de zona se captura aparte y se usa como respaldo.
+# * **multiline: true** — la mitad de los errores de WebLogic son stack traces
+#   que ocupan N líneas y solo la primera tiene timestamp. Sin esto, cada línea
+#   del trace se vuelve un evento suelto e inútil.
+
+name: weblogic
+kind: regex
+priority: 30
+description: WebLogic / java.util.logging, con stack traces multilínea
+multiline: true
+english_months: true
+
+timestamp:
+  # %z captura `+0200` y `-0700`. El nombre de zona abreviado (CEST, GMT) no lo
+  # cubre strptime, así que se captura aparte y se usa como respaldo.
+  formats:
+    - '%d/%m/%Y %H:%M:%S.%f %z'
+    - '%d/%m/%Y %H:%M:%S %z'
+
+zone_map:
+  # Sin esto la línea no se parsea: strptime no acepta abreviaturas de zona.
+  CEST: '+0200'
+  CET: '+0100'
+  GMT: '+0000'
+  UTC: '+0000'
+  WET: '+0000'
+  WEST: '+0100'
+  IST: '+0530'
+  WIB: '+0700'
+  SGT: '+0800'
+  CST_ASIA: '+0800'
+  JST: '+0900'
+  AEST: '+1000'
+
+regex: |
+  ^(?P<ts>\d{2}/[A-Za-z]{3}/\d{4}\s+\d{2}:\d{2}:\d{2}\.\d{3}\s+(?P<zone>\S+))
+  \s+(?P<logger>[\w.$]+)
+  \s*:\s*\[(?P<thread>[^\]]*)\]
+  \s+(?P<level>SEVERE|WARNING|INFO|CONFIG|FINE|FINER|FINEST)
+  (?:\s*\|)?
+  \s*(?P<message>.*?)\s*$
+
+message_template: '{message}'
+
+default_level: INFO
