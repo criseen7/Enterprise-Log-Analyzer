@@ -87,6 +87,11 @@ class PatternSpec:
     # None = hereda del Registry (y de config.yaml). Fijarla en el patrón
     # sobreescribiría la config global sin avisar.
     default_timezone: str | None = None
+    # Zonas abreviadas → offset numérico: {'CEST': '+0200', 'WIB': '+0700'}.
+    # `strptime` no entiende abreviaturas de zona, y en logs empresariales son
+    # la norma (CEST, MET, WIB, JST). El grupo `zone` se resuelve por aquí antes
+    # de pasar el timestamp a strptime, así que el formato NO lleva `%z`.
+    zone_map: dict[str, str] = field(default_factory=dict)
     english_months: bool = False
     default_level: str | None = None
     # Traducciones puntuales de nivel, por encima de los alias globales.
@@ -96,6 +101,24 @@ class PatternSpec:
 
     def compile_ok(self) -> bool:
         return self.kind == KIND_JSON or self.regex is not None
+
+
+def _split_entry(text: str, spec: PatternSpec) -> tuple[str, str]:
+    """Separa la cabecera (la línea con timestamp) del cuerpo de continuación.
+
+    Solo para patrones `multiline`. El regex se aplica a la cabecera, que es una
+    sola línea y por tanto encaja con cualquier patrón. Las líneas siguientes (el
+    stack trace) no se parsean: se anexan al mensaje.
+
+    Si el patrón no es multilínea, el texto entero va a la cabecera. Así una
+    entrada JSON con un salto a mitad de línea no se trunca en un punto
+    arbitrario, que es justo lo que un patrón de una línea no debería decidir.
+    """
+    if not spec.multiline or "\n" not in text:
+        return text, ""
+
+    head, _, continuation = text.partition("\n")
+    return head, continuation
 
 
 @dataclass(frozen=True)
@@ -207,6 +230,15 @@ def _load_spec(path: Path) -> PatternSpec:
                 )
             flags |= _REGEX_FLAGS[key]
 
+        # Un regex escrito como bloque YAML (`regex: |`) llega con saltos de línea
+        # reales. Sin VERBOSE esos saltos se literalan y el patrón deja de
+        # coincidir contra una línea de una sola línea, sin error de sintaxis que
+        # lo delate: el síntoma es "ningún patrón coincide", que no señala al
+        # regex. Se asume VERBOSE para los multilínea y se documenta, porque en un
+        # log no se quiere espacio literal: se usa `\s` o `[ ]`.
+        if "\n" in pattern_text:
+            flags |= re.VERBOSE
+
         try:
             compiled = re.compile(pattern_text, flags)
         except re.error as exc:
@@ -249,7 +281,14 @@ def _load_spec(path: Path) -> PatternSpec:
         status_levels.append((int(rule["from"]), str(rule["level"])))
     status_levels.sort(reverse=True)
 
-    return _replace(spec, status_levels=tuple(status_levels))
+    zone_map = {str(k).upper(): str(v) for k, v in (data.get("zone_map") or {}).items()}
+    for zone, offset in zone_map.items():
+        if not re.fullmatch(r"[+-]\d{4}", offset):
+            raise PatternError(
+                f"{path.name}: zone_map[{zone}]={offset!r} debe ser un offset numérico tipo '+0200'"
+            )
+
+    return _replace(spec, status_levels=tuple(status_levels), zone_map=zone_map)
 
 
 def _template_groups(template: str) -> set[str]:
@@ -315,9 +354,17 @@ class Registry:
         return len(self._specs)
 
     def detect(self, line: str) -> PatternSpec | None:
-        """Primer patrón que coincide, por orden de prioridad."""
+        """Primer patrón que coincide, por orden de prioridad.
+
+        En un patrón `multiline` se prueba solo la cabecera. Probar el texto
+        completo fallaría: el stack trace arrastra saltos de línea que el regex no
+        puede abarcar, así que una entrada ya ensamblada se clasificaría como
+        "sin patrón" y se descartaría justo cuando contiene el incidente entero.
+        """
+        head = line.partition("\n")[0] if "\n" in line else line
         for spec, compiled in self._compiled:
-            if compiled.search(line):
+            probe = head if spec.multiline else line
+            if compiled.search(probe):
                 return spec
         for spec in self._specs:
             if spec.kind == KIND_JSON and _looks_like_json(line):
@@ -363,21 +410,61 @@ class Registry:
                 message=text,
             )
 
+    @staticmethod
+    def _resolve_zone(spec: PatternSpec, ts_raw: str, zone_raw: str | None) -> tuple[str, str | None]:
+        """Sustituye una zona abreviada por su offset numérico, dentro del timestamp.
+
+        `strptime` con `%z` no entiende `CEST`, y en logs de servidores
+        aplicaciones esa forma es más común que `+0200`. El patrón declara
+        `zone_map` para que esa traducción viva en la config y no en código.
+
+        Se sustituye **en su sitio**, no se anexa: el grupo `ts` ya incluye la
+        zona, y los formatos llevan `%z` en esa posición. Una línea que venga
+        con `+0200` no pasa por aquí y no necesita ningún ajuste.
+
+        Una zona no listada en `zone_map` se deja intacta a propósito: `strptime`
+        fallará y el evento quedará como `parsed_ok=0`. Adivinar una zona
+        produciría timestamps silenciosamente equivocados, que es peor que no
+        parsear: el error queda visible en la cobertura y en `parse_error`.
+        """
+        if not spec.zone_map:
+            return ts_raw, None
+
+        zone = (zone_raw or "").strip()
+        if not zone:
+            return ts_raw, None
+
+        mapped = spec.zone_map.get(zone.upper())
+        if mapped is None:
+            return ts_raw, None
+
+        parts = ts_raw.split()
+        if not parts or parts[-1].upper() != zone.upper():
+            return ts_raw, None
+
+        parts[-1] = mapped
+        return " ".join(parts), mapped
+
     # --- implementaciones por kind ---
 
     def _parse_regex(self, spec: PatternSpec, text: str) -> ParseResult:
-        match = spec.regex.search(text)
+        head, continuation = _split_entry(text, spec)
+
+        match = spec.regex.search(head)
         if match is None:  #pragma: no cover - detect() ya lo garantiza
             return ParseResult(spec.name, False, text, "el regex dejó de coincidir", message=text)
         groups = _Groups(match.groupdict())
 
         ts_raw = _clean(groups.get("ts"))
+        ts_for_parse, source_tz_hint = self._resolve_zone(spec, ts_raw, groups.get("zone"))
         moment, source_tz = parse_timestamp(
-            ts_raw,
+            ts_for_parse,
             spec.timestamp_formats,
             default_timezone=spec.default_timezone or self._default_timezone,
             english_months=spec.english_months,
         )
+        if source_tz is None:
+            source_tz = source_tz_hint
 
         level_raw = _clean(groups.get("level"))
         level_norm = self._resolve_level(spec, level_raw, groups.get("status"))
@@ -385,8 +472,15 @@ class Registry:
         message = (
             spec.message_template.format_map(groups).strip()
             if spec.message_template
-            else _clean(groups.get("message")) or text
+            else _clean(groups.get("message")) or head
         )
+
+        # La continuación del stack trace se une al mensaje, no se parsea: forma
+        # parte del mismo incidente y sin ella el evento es inútil para
+        # diagnosticar. Se guarda tal cual, sin normalizar, porque un trace
+        # alterado ya no sirve para buscar la línea exacta en el log original.
+        if continuation:
+            message = f"{message}\n{continuation}"
 
         return ParseResult(
             pattern=spec.name,
