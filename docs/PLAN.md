@@ -182,24 +182,75 @@ docs/decisions/ADR-00N-*.md     artefactos de aprendizaje
   `log.message` y el mensaje es el dict serializado.
 - `default_timezone` ausente en un patrón significa "hereda de config.yaml".
   Declararlo sobreescribiría la config global en silencio.
-- **WebLogic sigue sin implementarse a propósito.** Su dificultad real es el
-  ensamblado multilínea de stack traces (Fase 2), no el regex. Implementarlo antes
-  produciría un parser que pasa los tests y corrompe los datos en producción.
-  `PatternSpec.multiline` queda reservado para la Fase 2.
+- **WebLogic quedó sin implementar en la Fase 1 a propósito.** Su dificultad
+  real es el ensamblado multilínea de stack traces, no el regex: implementarlo
+  antes habría producido un parser que pasa los tests y parte el stack trace en
+  N eventos basura. `PatternSpec.multiline` quedó reservado y se usó en la
+  Fase 2, donde WebLogic sí está implementado (`patterns/weblogic.yaml`).
 
 ---
 
-### Fase 2 — Ingesta *(la fase más importante)*
+### Fase 2 — Ingesta ✅ *completada 2026-10-07*
 
 **Tareas:** `reader.py` con offset tracking · detección de rotación (tamaño `< last_offset`
-**o** inode cambiado **o** mtime cambió) · ensamblado multilínea (línea sin match →
-continuación de la anterior) · `watcher.py` con debounce · `insert_events_bulk` con
-`INSERT OR IGNORE` en transacción única · generador de logs sintéticos
+**o** inode cambiado) · ensamblado multilínea · `watcher.py` con debounce ·
+inserción con `INSERT OR IGNORE` en transacción única · generador de logs
+sintéticos · CLI (`python -m app.ingest`)
 
-**Aceptación:**
-- **Re-procesar el mismo archivo 2 veces → `events_inserted=0` en la 2ª** (test de regresión)
-- Rotación simulada → nuevo `log_files.id`, cero duplicados
-- Stack trace Java de 15 líneas → **1** evento con el trace completo en `message`
+**Aceptación — verificada:**
+- [x] Re-procesar el mismo archivo 2 veces → `events_inserted=0` en la 2ª
+- [x] Rotación simulada → nuevo `log_files.id`, cero duplicados
+- [x] Stack trace Java → **1** evento con el trace completo en `message`
+- [x] 112 tests en verde · golden files al día
+
+**Implementado:**
+- `app/ingest/reader.py` — offsets en **bytes**, sólo líneas terminadas en `\n`
+  (una línea a medio escribir queda para la próxima pasada), ensamblado de
+  entradas multilínea con tope de 4 MB por seguridad.
+- `app/ingest/ingestor.py` — orquestación y orden de operaciones:
+  resolver → leer/parsear → insertar → **entonces** avanzar `last_offset`.
+- `app/ingest/watcher.py` — `WatchState` con debounce + watchdog si está
+  disponible, polling como camino por defecto (más lento, pero no depende de una
+  dependencia opcional).
+- `app/ingest/__main__.py` — `python -m app.ingest [--once|--watch|--status]`.
+- `app/db/repository.py` — `resolve_log_file()` con los cuatro caminos de rotación.
+- `app/db/migrations/_002_log_files_identity.sql` + `SCHEMA_VERSION = 2`.
+- `app/parser/patterns/weblogic.yaml` — habilitado por el ensamblado multilínea,
+  con `zone_map` para zonas abreviadas (`CEST`, `WIB`…).
+- `tools/generate_sample_logs.py`.
+- ADR-003 (identidad de archivo por `(inode, generation)`).
+
+**Hallazgos registrados durante la implementación:**
+
+- **La identidad por `path` perdía datos en `copytruncate`.** `UNIQUE(path)` hace
+  que la ruta sea el identificador; con truncado la ruta se mantiene y el
+  `last_offset` viejo queda más allá del contenido nuevo, así que la ingesta
+  reportaba "0 líneas nuevas" mientras el archivo crecía. Cambiado a
+  `(inode, generation)` — ADR-003. La migración reconstruye la tabla; un
+  `CREATE TABLE IF NOT EXISTS` no habría servido.
+- **Los regex multilínea en bloque YAML necesitan `re.VERBOSE`.** Sin él, los
+  saltos de línea del propio patrón se toman como literales y el regex deja de
+  coincidir sin ningún error de sintaxis: el síntoma es "ningún patrón coincide",
+  que no apunta al regex. Apache lo declaraba con `flags:` y WebLogic no, y
+  fracasaba en silencio. Se aplica `VERBOSE` automáticamente cuando el patrón
+  contiene saltos de línea.
+- **Ensamblar multilínea rompe JSON.** Pegar líneas a un registro JSON produce
+  un JSON inválido y el evento entero se pierde como `parsed_ok=0`. Por eso el
+  ensamblado sólo aplica si el patrón declara `multiline: true`; una línea sin
+  patrón en un formato de una línea se conserva como evento propio, no se descarta.
+  Es el uso de `PatternSpec.multiline`, reservado en la Fase 1.
+- **`detect()` probaba el regex contra el texto completo.** Con una entrada ya
+  ensamblada, los saltos de línea la hacían no coincidir con ningún patrón — se
+  clasificaba como "sin formato" justo cuando contenía el stack trace completo.
+  Ahora sólo se prueba la cabecera cuando el patrón es `multiline`.
+- **El orden de descubrimiento afecta al estado.** `discover()` ordena
+  alfabéticamente, así que `app.log` se procesa antes que `app.log.1`; la fila
+  que aún declaraba `app.log` se desactivaba al crear la del archivo nuevo. La
+  rama de rename ahora reactiva `is_active = 1`.
+- **`_coerce` no contemplaba `Path`.** Cualquier override por variable de
+  entorno de una ruta quedaba como `str` y reventaba después en `.is_dir()`.
+- **Deuda consciente:** `copytruncate` con exactamente el mismo tamaño es
+  indistinguible de "no cambió" leyendo sólo el tamaño. Anotado en ADR-003.
 
 ---
 
@@ -257,7 +308,7 @@ compose con **volúmenes** para `logs:ro`, `data`, `exports` · servicios `analy
 
 ## 6. Explícitamente fuera de alcance (post-MVP)
 
-- Formatos IIS y WebLogic (y el problema de multilínea de Oracle)
+- Formato IIS
 - Anomalías avanzadas (IQR, seasonalidad)
 - Correlación de eventos (ventana temporal + entidades comunes)
 - Búsqueda estilo Splunk (lenguaje de consultas propio)
@@ -293,7 +344,7 @@ compose con **volúmenes** para `logs:ro`, `data`, `exports` · servicios `analy
 | Riesgo | Mitigación |
 |---|---|
 | Scope creep hacia "Features" | Regla dura: no se toca Fase 6 sin cerrar 0–5 |
-| Inflación de tiempo en Regex/WebLogic | Aplazado; el cookbook documenta el problema sin resolverlo |
+| WebLogic multilínea | Resuelto en Fase 2 (`multiline` + `re.VERBOSE`); IIS sigue fuera de alcance |
 | Dashboard lento con muchos logs | Agregación en SQL + índices + caché; nunca `read_sql` completo |
 | Bugs de timezone | Fixtures con tz mixta y test dedicado |
 | Datos duplicados | Test de regresión en CI, no opcional |
@@ -306,11 +357,11 @@ compose con **volúmenes** para `logs:ro`, `data`, `exports` · servicios `analy
 | Fase | Comando de aceptación |
 |---|---|
 | 0 | `python -m unittest discover tests -v` · `PRAGMA journal_mode` = `wal` |
-| 1 | `pytest tests/test_parser.py -v` · ratio ≥95% |
-| 2 | `pytest tests/test_ingest.py -v` · doble ingesta = 0 inserts |
-| 3 | `pytest tests/test_analysis.py -v` |
+| 1 | `python -m unittest tests.test_parser -v` |
+| 2 | `python -m unittest tests.test_ingest -v` · doble ingesta = 0 inserts |
+| 3 | `python -m unittest tests.test_analysis -v` |
 | 4 | `streamlit run app/ui/app.py` con dataset sintético |
-| 5 | `pytest tests/test_alerts.py -v` · 5k errores → 1 incidente |
+| 5 | `python -m unittest tests.test_alerts -v` · 5k errores → 1 incidente |
 | 6 | `docker compose up --build` |
 
 **Orden de ejecución:** 0 → 1 → 2 → 3 → 4 → 5. Las fases 2 y 1 son el núcleo de
