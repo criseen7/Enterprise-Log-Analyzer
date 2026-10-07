@@ -134,8 +134,8 @@ class TimestampTests(unittest.TestCase):
 class PatternLoadingTests(unittest.TestCase):
     def test_shipped_patterns_load(self):
         specs = load_patterns(PATTERNS_DIR)
-        self.assertGreaterEqual(len(specs), 2)
-        self.assertEqual({s.name for s in specs}, {"apachev2", "json"})
+        self.assertGreaterEqual(len(specs), 3)
+        self.assertEqual({s.name for s in specs}, {"apachev2", "json", "weblogic"})
 
     def test_missing_required_group_fails_at_load(self):
         import tempfile

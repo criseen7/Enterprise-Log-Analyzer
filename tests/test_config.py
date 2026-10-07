@@ -15,6 +15,7 @@ from app.config import (
     load_settings,
 )
 from app.db.migrations import applied_versions, migrate, status
+from app.db.schema import SCHEMA_VERSION
 from tests.helpers import EnvSandbox, TempDbTestCase
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -188,10 +189,10 @@ class MigrationTests(TempDbTestCase):
         )
 
     def test_is_idempotent(self):
-        self.assertEqual(migrate(self.db_path), [1])
+        self.assertEqual(migrate(self.db_path), list(range(1, SCHEMA_VERSION + 1)))
         self.assertEqual(migrate(self.db_path), [])
         conn = self.connect()
-        self.assertEqual(applied_versions(conn), [1])
+        self.assertEqual(applied_versions(conn), list(range(1, SCHEMA_VERSION + 1)))
 
     def test_applied_at_is_iso_utc(self):
         migrate(self.db_path)
@@ -201,9 +202,53 @@ class MigrationTests(TempDbTestCase):
         self.assertRegex(applied_at, r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$")
 
     def test_status_before_and_after(self):
-        self.assertEqual(status(self.db_path), (0, 1))
+        self.assertEqual(status(self.db_path), (0, SCHEMA_VERSION))
         migrate(self.db_path)
-        self.assertEqual(status(self.db_path), (1, 1))
+        self.assertEqual(status(self.db_path), (SCHEMA_VERSION, SCHEMA_VERSION))
+
+    def test_old_v1_database_upgrades_without_losing_schema(self):
+        """Una base v1 existente debe llegar a v2 conservando su esquema.
+
+        Es el caso que la baseline no cubre: `CREATE TABLE IF NOT EXISTS` no añade
+        la columna `generation` a una tabla que ya existe, así que una base
+        antigua quedaría registrada como v2 con el esquema de v1. Si este test no
+        existe, esa divergencia solo se ve en la máquina que tenía datos viejos.
+        """
+        from app.db.migrations import _BASELINE_VERSION, _deltas
+
+        migrate(self.db_path, target=_BASELINE_VERSION)
+        conn = self.connect()
+        conn.execute(_FILE_ROW)
+        conn.execute(
+            "INSERT INTO events (file_id, offset, raw_line) VALUES (1, 0, 'pre-v2')"
+        )
+        conn.close()
+
+        restantes = list(range(_BASELINE_VERSION + 1, SCHEMA_VERSION + 1))
+        self.assertEqual(migrate(self.db_path), restantes)
+
+        conn = self.connect()
+        columnas = {r[1] for r in conn.execute("PRAGMA table_info(log_files)")}
+        self.assertIn("generation", columnas, "la migración 2 debe añadir generation")
+        self.assertEqual(
+            conn.execute("SELECT COUNT(*) FROM events").fetchone()[0],
+            1,
+            "los eventos existentes deben sobrevivir al rebuild",
+        )
+        self.assertEqual(
+            [tuple(r) for r in conn.execute("SELECT path, generation FROM log_files")],
+            [("logs/a.log", 0)],
+        )
+        claves = [
+            r[1] for r in conn.execute("PRAGMA index_list(log_files)") if r[3] == "u"
+        ]
+        self.assertTrue(claves, "la tabla debe conservar una clave candidata tras el rebuild")
+
+        # Cobertura completa: nada entre 1 y SCHEMA_VERSION sin delta ni baseline.
+        self.assertEqual(
+            set(_deltas) | {_BASELINE_VERSION},
+            set(range(1, SCHEMA_VERSION + 1)),
+        )
 
     def test_refuses_newer_database(self):
         migrate(self.db_path)
