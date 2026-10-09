@@ -4,7 +4,7 @@ Plataforma de observabilidad y análisis de logs para entornos empresariales. Ca
 de forma incremental, los normaliza, detecta errores críticos, agrupa patrones
 recurrentes y expone métricas en un dashboard interactivo con exportación de reportes.
 
-**Estado:** en desarrollo activo. Fases 0–2 completadas (112 tests) — ver
+**Estado:** en desarrollo activo. Fases 0–3 completadas (152 tests) — ver
 [docs/PLAN.md](docs/PLAN.md).
 
 ---
@@ -79,7 +79,11 @@ Enterprise-Log-Analyzer/
 │   │   ├── connection.py       WAL · busy_timeout · contextmanager
 │   │   ├── schema.sql  migrations/  repository.py
 │   ├── analysis/
-│   │   ├── errors.py  patterns.py  metrics.py  anomalies.py  alerts.py
+│   │   ├── error_rules.yaml     categorías de error · orden = prioridad
+│   │   ├── errors.py            ErrorRules · validación al cargar
+│   │   ├── fingerprint.py       normalización · sha256
+│   │   ├── metrics.py  patterns.py  anomalies.py  backfill.py
+│   │   └── __main__.py          CLI: python -m app.analysis
 │   ├── ui/
 │   │   ├── app.py  pages/  components/  theme.py
 │   └── reports/                CSV · HTML
@@ -131,7 +135,15 @@ python tools/generate_sample_logs.py
 python -m app.ingest --once
 python -m app.ingest --status     # cobertura de parseo y últimas pasadas
 
-# 4. Lanzar el dashboard (Fase 4)
+# 4. Analizar (sin necesidad de dashboard)
+python -m app.analysis                  # resumen general
+python -m app.analysis --top 8          # errores agrupados por fingerprint
+python -m app.analysis --hourly         # errores por hora
+python -m app.analysis --anomalies      # z-score sobre el conteo horario
+python -m app.analysis --patterns       # patrones en la última ventana
+python -m app.analysis --backfill       # rellena la huella de datos antiguos
+
+# 5. Lanzar el dashboard (Fase 4)
 streamlit run app/ui/app.py
 ```
 
@@ -167,18 +179,19 @@ python -m tests.regenerate_golden   # regenera (revisar el diff antes de aceptar
 
 ### En el MVP (fases 0–5)
 
-1. **Parser inteligente** — detecta `timestamp`, `nivel`, `mensaje`, `servicio`, `logger`
-   desde configuración, con normalización a UTC.
-2. **Ingesta idempotente** — offsets, rotación, ensamblado multilínea (stack traces Java).
-3. **Detección de errores críticos** — `timeout`, `connection refused`, `null pointer`,
-   `out of memory`, `failed login`, con categorías y severidad normalizada.
-4. **Patrones recurrentes** — fingerprint por mensaje normalizado (dígitos, UUIDs,
+1. ✅ **Parser inteligente** — detecta `timestamp`, `nivel`, `mensaje`, `servicio`,
+   `logger` desde configuración, con normalización a UTC.
+2. ✅ **Ingesta idempotente** — offsets, rotación, ensamblado multilínea (stack traces Java).
+3. ✅ **Detección de errores críticos** — `timeout`, `connection refused`,
+   `null pointer`, `out of memory`, `failed login`, con categorías (reglas en
+   YAML) y severidad normalizada.
+4. ✅ **Patrones recurrentes** — fingerprint por mensaje normalizado (dígitos, UUIDs,
    IPs y hex colapsan a placeholders) para agrupar lo que en realidad es el mismo
-   error.
-5. **Dashboard** — KPIs, errores por hora, top errores, timeline, heatmap día×hora.
-6. **Alertas** — incidentes con dedup por fingerprint y cooldown; export CSV/HTML.
-7. **Métricas de la propia herramienta** — `ingest_runs` visible para demostrar que
-   los números del dashboard son auditables.
+   error, más recurrencia por ventana y anomalías por z-score.
+5. *(Fase 4)* **Dashboard** — KPIs, errores por hora, top errores, timeline, heatmap día×hora.
+6. *(Fase 5)* **Alertas** — incidentes con dedup por fingerprint y cooldown; export CSV/HTML.
+7. **Métricas de la propia herramienta** — `ingest_runs` ya se registra en cada
+   pasada; el panel llega con el dashboard.
 
 ### Post-MVP (backlog, ver [docs/PLAN.md](docs/PLAN.md) §6)
 
@@ -230,6 +243,38 @@ dashboard como "cobertura de parseo", en lugar de descartarse en silencio.
 
 ---
 
+## Clasificación y agrupación
+
+Dos preguntas distintas, dos columnas nuevas en `events`:
+
+- **`category` — ¿qué tipo de problema es?** Sale de
+  `app/analysis/error_rules.yaml`: una lista ordenada donde **gana la primera
+  regla que coincide** (`failed login` → `auth`, `connection refused` →
+  `connection`, 5xx → `http-5xx`). Añadir una categoría es añadir una regla,
+  no código. Un YAML mal formado falla **al cargar**, nunca durante la ingesta.
+- **`fingerprint` — ¿es otra vez el mismo error?** `sha256` truncado a 16 hex
+  sobre `categoría + mensaje normalizado`, donde lo que varía entre ejecuciones
+  se sustituye por `<UUID> <TS> <IP> <HEX> <NUM>`. 100 accesos fallidos que
+  sólo cambian en `code=` son **1** fingerprint, no 100 barras de una unidad.
+
+El orden de esas sustituciones y las alternativas descartadas están en
+[ADR-004](docs/decisions/ADR-004-event-fingerprint.md).
+
+### Métricas
+
+Todo se agrega en SQL; ninguna carga la tabla `events` entera en memoria.
+
+| Comando | Qué responde |
+|---|---|
+| `python -m app.analysis` / `--overview` | cuántos eventos, cuántos parseados, cuántos errores, fingerprints distintos |
+| `--hourly` | errores por hora, rango `[since, until)` |
+| `--top N` | los N errores más repetidos, agrupados por fingerprint |
+| `--patterns --window MIN` | qué se repite en la ventana; por defecto acaba en el **último evento** del dataset, no en el reloj |
+| `--anomalies` | qué hora se sale de lo normal: z-score leave-one-out, sólo picos |
+| `--backfill [--recalc]` | rellena `fingerprint`/`category` de datos antiguos; `--recalc` reescribe lo ya clasificado |
+
+---
+
 ## Qué aprendí
 
 Las decisiones están en [`docs/decisions/`](docs/decisions/). Lo ya verificado:
@@ -270,10 +315,34 @@ Las decisiones están en [`docs/decisions/`](docs/decisions/). Lo ya verificado:
   antes que `app.log.1`; sin reactivar `is_active` en la rama de rename, el archivo
   vivo aparecía como inactivo.
 
+**Fase 3 — análisis (ADR-004)**
+- **Agrupar es más difícil que contar.** `COUNT(*) GROUP BY message` devuelve un
+  grupo por evento porque el mensaje trae un identificador distinto cada vez.
+  La huella existe para eso: normalizar y *después* hashear.
+- **El orden de la normalización es el algoritmo.** UUID, timestamp e IP van
+  antes que los números (`0x1f` se partiría en dos) y los números van sin
+  límite de palabra: con `\b`, `u123` no se toca y cada evento queda en su
+  propia huella, que es exactamente lo que la huella viene a evitar.
+- **Un z-score sobre la serie completa se auto-suprime.** El pico sube la
+  desviación de todo y se disimula a sí mismo. Media y desviación tienen que
+  ser *leave-one-out*, y las horas vacías tienen que estar rellenadas o seis
+  horas con errores y cincuenta sin aparecer dan una media inflada donde
+  cualquier cosa parece anómala.
+- **La ventana no puede mirar el reloj.** Con datos históricos,
+  `ahora - ventana` no toca ningún evento y el resultado es vacío sin estarlo.
+  Por defecto la ventana acaba en el último timestamp del propio dataset.
+- **La cobertura de parseo se puede mentir a sí misma.** Una línea sin formato
+  pegada a un stack trace se ensambla como continuación: no se pierde, pero
+  `parsed_ok` sale `1`. Un dataset de demo puede acabar en 100% teniendo una
+  línea basura dentro; el generador antepone un registro JSON a propósito.
+- **El generador decidía nivel y mensaje por separado** y producía "pago
+  rechazado" a `INFO` y "pedido creado" a `ERROR`: las queries eran correctas
+  sobre datos tramposos. Nivel y mensaje van juntos en la misma lista.
+
 ---
 
-Los siguientes puntos del plan (`cache_data`, anomalías) se documentarán en
-`docs/pitfalls.md` al cerrar las fases 3–5.
+Los siguientes puntos del plan (`cache_data`, filtros sin re-parseo) se
+documentarán en `docs/pitfalls.md` al cerrar las fases 4–5.
 
 ---
 

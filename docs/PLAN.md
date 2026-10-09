@@ -109,7 +109,12 @@ app/
     connection.py               WAL · busy_timeout · contextmanager
     schema.sql  migrations/  repository.py
   analysis/
-    errors.py  patterns.py  metrics.py  anomalies.py  alerts.py
+    error_rules.yaml            reglas de categoría · orden = prioridad
+    errors.py                   ErrorRules · validación al cargar
+    fingerprint.py              normalización del mensaje · sha256
+    metrics.py  patterns.py  anomalies.py  backfill.py
+    __main__.py                 CLI: python -m app.analysis
+    alerts.py                   (Fase 5)
   ui/
     app.py  pages/  components/  theme.py
   reports/
@@ -254,16 +259,83 @@ sintéticos · CLI (`python -m app.ingest`)
 
 ---
 
-### Fase 3 — Análisis
+### Fase 3 — Análisis ✅ *completada 2026-10-08*
 
 **Tareas:** reglas de error desde YAML · **fingerprint** = mensaje normalizado
 (dígitos, UUIDs, hex, IPs, timestamps → placeholders) + categoría, hasheado ·
 `patterns.py` (recurrencia por ventana) · `metrics.py` con agregaciones **en SQL** ·
 `anomalies.py` versión MVP (z-score sobre conteo horario)
 
-**Aceptación:**
-- "Errores por hora" coincide con el conteo manual del fixture (valor esperado escrito a mano)
-- 100 accesos fallidos idénticos salvo el código → **1** fingerprint
+**Aceptación — verificada:**
+- [x] "Errores por hora" coincide con el conteo manual del fixture (el valor
+  esperado está escrito a mano en `tests/test_analysis.py`, no sale de la query)
+- [x] 100 accesos fallidos idénticos salvo el código → **1** fingerprint
+- [x] 152 tests en verde · golden files al día
+- [x] E2E: 542 eventos, 541 parseados (1 línea basura a propósito), 28
+  fingerprints, 2ª pasada → 0 inserts
+
+**Implementado:**
+- `app/analysis/error_rules.yaml` + `errors.py` — 11 reglas en orden
+  (`auth`, `http-5xx`, `http-4xx`, `null-pointer`, `connection`, `timeout`,
+  `resource-exhausted`, `sql`, `transaction`, `storage`, `payment`), primera
+  coincidencia gana, `IGNORECASE`, cualquier YAML malo → `ConfigError` al cargar.
+- `app/analysis/fingerprint.py` — `normalize_message` (UUID → timestamp → IP →
+  hex → números, en ese orden) y `event_fingerprint` = `sha256(categoría + "\n" +
+  mensaje)[:16]`.
+- `app/analysis/metrics.py` — `overview`, `errors_by_hour`, `top_errors`,
+  `timeline_by_severity`, `heatmap_day_hour`, `by_category`, `by_service`;
+  rango `[since, until)` y agregación entera en SQL.
+- `app/analysis/patterns.py` — recurrencia por ventana deslizante sobre
+  `MAX(timestamp_utc)` del dataset.
+- `app/analysis/anomalies.py` — `hourly_counts` con serie **rellenada** y
+  `anomalies` con z-score **leave-one-out**, sólo picos, `_MIN_BUCKETS = 3` y
+  `min_samples` por bucket.
+- `app/analysis/backfill.py` — `--backfill [--recalc]`, lotes en una transacción.
+- `app/analysis/__main__.py` — `python -m app.analysis [--overview|--top N|
+  --hourly|--anomalies|--patterns|--backfill]`, comprobable sin dashboard.
+- Esquema **v3**: `events.category` + `idx_events_cat_ts`; `SCHEMA_VERSION = 3`;
+  `tests/fixtures/schema_v1.sql` como snapshot real para el test de migración.
+- Cableado: `repository.event_row(..., fingerprint, category)` y las reglas se
+  pasan por `ingestor` → `watcher` → `__main__`; `analysis.rules_path` en
+  `config.yaml` + `ELA_ERROR_RULES_PATH`.
+- `tools/generate_sample_logs.py` — nivel y mensaje acoplados en una sola lista.
+- ADR-004 (fingerprint).
+
+**Hallazgos registrados durante la implementación:**
+
+- **La cobertura del demo salía 100% con una línea basura dentro.** Una línea
+  sin patrón justo detrás de un stack trace entra como *continuación* de esa
+  entrada multilínea: no se pierde, pero `parsed_ok` sale `1` y la cobertura
+  miente. Es la regla de Fase 2, no un bug; se hacía visible porque la cobertura
+  era el número que se miraba. El generador ahora antepone un registro JSON a
+  propósito para que la línea suelta tenga entrada propia.
+- **El generador de demo decidía nivel y mensaje por separado.** Salía
+  "pago rechazado por el banco" a `INFO` y "pedido creado" a `ERROR`; las
+  métricas eran correctas sobre datos tramposos. Nivel y mensaje ahora van juntos.
+- **El orden de normalización es el algoritmo.** UUID/timestamp/hex tienen que
+  sustituirse *antes* que los números (`0x1f` se partiría en dos) y los números
+  van sin `\b`, porque `u123` o `30000ms` se quedarían intactos y cada evento
+  tendría su propia huella.
+- **La ventana por defecto no puede usar el reloj de pared.** Con un dataset de
+  octubre y "ahora" en el reloj actual, `now - ventana` no toca ningún evento y
+  `recurring_patterns` devuelve vacío sin estarlo. Por defecto se usa el último
+  timestamp del propio dataset.
+- **`until` tenía que ser exclusivo en la serie.** Con `until = 12:00` la última
+  hora cubierta es la 11; si no, la serie termina en una hora 12 con 0 eventos
+  y esa hora vacía entra en la media como si se hubiera medido.
+- **El z-score sobre la serie completa se auto-suprime.** Un pico grande sube
+  la desviación de todo y se disimula a sí mismo; con pocas horas es la
+  diferencia entre detectarlo y no ver nada. Por eso media y desviación son
+  *leave-one-out* (el test compara contra el valor calculado a mano).
+- **Una serie sin horas vacías miente más que una vacía.** Seis horas con
+  errores y cincuenta sin aparecer darían media inflada y desviación casi nula:
+  cualquier cosa parecería anómala. `hourly_counts` rellena el hueco.
+- **`min_samples` es mínimo de eventos por bucket, no de buckets.** Un pico de
+  3 eventos frente a 0 es ruido de fondo; con dos buckets la leave-one-out mira
+  a un solo valor y la desviación es 0 por construcción — por eso `_MIN_BUCKETS = 3`.
+- **Los datos anteriores a la fase no tienen huella y no deben tocarse.**
+  `fingerprint IS NULL` marca lo que falta; reclasificar todo exige `--recalc`,
+  que es explícito porque reescribe decisiones ya tomadas.
 
 ---
 

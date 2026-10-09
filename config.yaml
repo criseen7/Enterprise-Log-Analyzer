@@ -36,6 +36,9 @@ db:
   max_size_gb: 4
 
 analysis:
+  # Reglas que clasifican cada evento al ingerirlo (categoría + fingerprint).
+  # Relativas a la raíz del proyecto, como el resto de rutas.
+  rules_path: app/analysis/error_rules.yaml
   # Severidad mínima (40 = WARN) para que un evento sea candidato a incidente.
   min_incident_severity: 40
   # Ventana temporal para evaluar umbrales.
