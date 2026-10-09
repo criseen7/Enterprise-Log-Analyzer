@@ -27,7 +27,19 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from app.analysis.errors import ErrorRules
 from app.ingest.ingestor import discover, ingest_paths_transactional
+
+
+def _resolve_rules(config, rules: ErrorRules | None) -> ErrorRules:
+    """Reglas efectivas de esta pasada.
+
+    Se resuelve aquí, una sola vez por arranque, y no dentro de la bucle de
+    polling: releer el YAML en cada ciclo haría que los eventos de una misma
+    corrida pudieran clasificarse con reglas distintas si alguien edita el
+    archivo mientras el watcher corre.
+    """
+    return rules if rules is not None else ErrorRules.load(config.analysis.rules_path)
 
 
 @dataclass
@@ -58,7 +70,13 @@ class WatchState:
         return out
 
 
-def ingest_due(config, conn, registry, state: WatchState | None = None) -> int:
+def ingest_due(
+    config,
+    conn,
+    registry,
+    state: WatchState | None = None,
+    rules: ErrorRules | None = None,
+) -> int:
     """Procesa la ventana si venció. Devuelve el nº de corridas (0 o 1)."""
     if state is None:
         state = WatchState(config.ingest.debounce_seconds)
@@ -67,7 +85,9 @@ def ingest_due(config, conn, registry, state: WatchState | None = None) -> int:
     rutas = state.take()
     if not rutas:
         return 0
-    ingest_paths_transactional(conn, registry, rutas, config.ingest.chunk_bytes)
+    ingest_paths_transactional(
+        conn, registry, rutas, config.ingest.chunk_bytes, _resolve_rules(config, rules)
+    )
     return 1
 
 
@@ -79,6 +99,7 @@ def run_polling(
     max_cycles: int | None = None,
     sleep: Callable[[float], None] = time.sleep,
     on_cycle: Callable[[int], None] | None = None,
+    rules: ErrorRules | None = None,
 ) -> int:
     """Bucle de polling: comprueba `log_dir` y ingerí lo que creció.
 
@@ -86,11 +107,14 @@ def run_polling(
     acumula nada. `max_cycles` y `sleep` son inyectables para poder testear sin
     dormir reales; en producción queda `None`.
     """
+    efectivas = _resolve_rules(config, rules)
     cycles = 0
     while max_cycles is None or cycles < max_cycles:
         rutas = {p for p in discover(config) if p.is_file()}
         if rutas:
-            ingest_paths_transactional(conn, registry, rutas, config.ingest.chunk_bytes)
+            ingest_paths_transactional(
+                conn, registry, rutas, config.ingest.chunk_bytes, efectivas
+            )
             cycles += 1
             if on_cycle:
                 on_cycle(cycles)
@@ -99,7 +123,7 @@ def run_polling(
     return cycles
 
 
-def _watch_with_watchdog(config, conn, registry, on_cycle) -> int:  # noqa: ANN001
+def _watch_with_watchdog(config, conn, registry, on_cycle, rules) -> int:  # noqa: ANN001
     """Camino con watchdog. Devuelve solo al recibir Ctrl-C."""
     from watchdog.events import FileSystemEventHandler  # type: ignore[import-untyped]
     from watchdog.observers import Observer  # type: ignore[import-untyped]
@@ -131,7 +155,7 @@ def _watch_with_watchdog(config, conn, registry, on_cycle) -> int:  # noqa: ANN0
                 rutas = state.take()
                 if rutas:
                     ingest_paths_transactional(
-                        conn, registry, rutas, config.ingest.chunk_bytes
+                        conn, registry, rutas, config.ingest.chunk_bytes, rules
                     )
                     cycles += 1
                     if on_cycle:
@@ -145,7 +169,7 @@ def _watch_with_watchdog(config, conn, registry, on_cycle) -> int:  # noqa: ANN0
     return cycles
 
 
-def _watch_polling(config, conn, registry, on_cycle) -> int:  # noqa: ANN001
+def _watch_polling(config, conn, registry, on_cycle, rules) -> int:  # noqa: ANN001
     """Fallback sin watchdog. Igual de correcto, solo más lento en detectar cambios."""
     cycles = 0
     try:
@@ -153,7 +177,7 @@ def _watch_polling(config, conn, registry, on_cycle) -> int:  # noqa: ANN001
             rutas = {p for p in discover(config) if p.is_file()}
             if rutas:
                 ingest_paths_transactional(
-                    conn, registry, rutas, config.ingest.chunk_bytes
+                    conn, registry, rutas, config.ingest.chunk_bytes, rules
                 )
                 cycles += 1
                 if on_cycle:
@@ -164,17 +188,24 @@ def _watch_polling(config, conn, registry, on_cycle) -> int:  # noqa: ANN001
     return cycles
 
 
-def watch(config, conn, registry, on_cycle: Callable[[int], None] | None = None) -> int:
+def watch(
+    config,
+    conn,
+    registry,
+    on_cycle: Callable[[int], None] | None = None,
+    rules: ErrorRules | None = None,
+) -> int:
     """Bucle principal: watchdog si está disponible, polling si no.
 
     La elección es transparente para el resto del sistema: las dos rutas llaman a
     la misma `ingest_paths_transactional`, que es donde está la idempotencia.
     """
+    efectivas = _resolve_rules(config, rules)
     try:
         from watchdog.observers import Observer  # noqa: F401
     except Exception:  # noqa: BLE001 - dependencia opcional, no control de flujo
-        return _watch_polling(config, conn, registry, on_cycle)
-    return _watch_with_watchdog(config, conn, registry, on_cycle)
+        return _watch_polling(config, conn, registry, on_cycle, efectivas)
+    return _watch_with_watchdog(config, conn, registry, on_cycle, efectivas)
 
 
 __all__ = [

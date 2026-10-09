@@ -21,6 +21,8 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from app.analysis.errors import ErrorRules
+from app.analysis.fingerprint import event_fingerprint
 from app.db.repository import (
     InsertCounts,
     count_events,
@@ -60,24 +62,25 @@ class RunResult:
     errors: list[str] = field(default_factory=list)
 
 
-def fingerprint(entry_text: str) -> str | None:
-    """Huella estable para agrupar eventos repetidos.
-
-    Deliberadamente perezoso: se deja en `None` para que Fase 4 la defina cuando
-    exista una noción clara de qué campos identifican una incidencia. Ponerla
-    ahora significaría adivinar y luego migrar datos.
-    """
-    return None
-
-
 def ingest_file(
-    conn, path: Path, registry: Registry, chunk_bytes: int = 1_048_576
+    conn,
+    path: Path,
+    registry: Registry,
+    chunk_bytes: int = 1_048_576,
+    rules: ErrorRules | None = None,
 ) -> FileResult:
-    """Ingesta un archivo. Idempotente: llamarlo dos veces no duplica eventos."""
+    """Ingesta un archivo. Idempotente: llamarlo dos veces no duplica eventos.
+
+    `rules` clasifica cada evento en el momento de escribirlo (`category` +
+    `fingerprint`). Si no se pasa, se usan las reglas empaquetadas: quien llame
+    con `analysis.rules_path` custom debe pasarlas, si no, dos rutas de
+    clasificación convivirían en la misma base.
+    """
     state = resolve_log_file(conn, path)
     if state is None:
         return FileResult(path, "vanished", "no existe en disco")
 
+    rules = rules or ErrorRules.default()
     entries, new_offset = iter_entries(path, state.offset, registry, chunk_bytes)
 
     rows: list[tuple] = []
@@ -86,7 +89,19 @@ def ingest_file(
         result = registry.parse_line(entry.text)
         if not result.parsed_ok:
             unparsed += 1
-        rows.append(event_row(state.file_id, entry.offset, result, fingerprint(entry.text)))
+        # `message` puede ser None en una línea vacía: la huella se calcula
+        # sobre lo que haya, igual que hace el backfill con COALESCE(message, raw_line).
+        text = result.message or result.raw_line
+        category = rules.category(text)
+        rows.append(
+            event_row(
+                state.file_id,
+                entry.offset,
+                result,
+                event_fingerprint(category, text),
+                category,
+            )
+        )
 
     counts = insert_events(conn, rows)
     if rows:
@@ -114,7 +129,11 @@ def ingest_file(
 
 
 def ingest_paths(
-    conn, registry: Registry, paths: Iterable[Path], chunk_bytes: int = 1_048_576
+    conn,
+    registry: Registry,
+    paths: Iterable[Path],
+    chunk_bytes: int = 1_048_576,
+    rules: ErrorRules | None = None,
 ) -> RunResult:
     """Ingesta un conjunto de archivos y deja constancia en `ingest_runs`."""
     started = time.perf_counter()
@@ -124,7 +143,7 @@ def ingest_paths(
 
     for path in paths:
         try:
-            result = ingest_file(conn, path, registry, chunk_bytes)
+            result = ingest_file(conn, path, registry, chunk_bytes, rules)
         except Exception as exc:  # noqa: BLE001 - un archivo malo no corta la pasada
             files.append(FileResult(path, "error", f"{type(exc).__name__}: {exc}"))
             continue
@@ -189,6 +208,7 @@ def ingest_paths_transactional(
     registry: Registry,
     paths: Iterable[Path],
     chunk_bytes: int = 1_048_576,
+    rules: ErrorRules | None = None,
 ) -> RunResult:
     """Como `ingest_paths`, pero con los cambios de DB en una transacción.
 
@@ -199,7 +219,7 @@ def ingest_paths_transactional(
     from app.db.connection import transaction
 
     with transaction(conn):
-        return ingest_paths(conn, registry, paths, chunk_bytes)
+        return ingest_paths(conn, registry, paths, chunk_bytes, rules)
 
 
 __all__ = [
@@ -207,7 +227,7 @@ __all__ = [
     "RunResult",
     "count_events",
     "discover",
-    "fingerprint",
+    "event_fingerprint",
     "ingest_file",
     "ingest_paths",
     "ingest_paths_transactional",

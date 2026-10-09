@@ -15,6 +15,7 @@ import argparse
 import sys
 from pathlib import Path
 
+from app.analysis.errors import ErrorRules
 from app.config import load_settings
 from app.db.connection import connect
 from app.db.migrations import migrate
@@ -66,6 +67,9 @@ def main(argv: list[str] | None = None) -> int:
             return show_status(conn)
 
         registry = Registry.from_directory(config.paths.patterns_dir)
+        # Carga aquí (no dentro del bucle): un YAML de reglas mal formado debe
+        # romper al arrancar, con la regla culpable en el mensaje.
+        rules = ErrorRules.load(config.analysis.rules_path)
         if args.watch:
             from app.ingest.watcher import watch
 
@@ -82,7 +86,7 @@ def main(argv: list[str] | None = None) -> int:
             print("genera unos con: python3 tools/generate_sample_logs.py")
             return 0
 
-        run = ingest_paths_transactional(conn, registry, rutas, config.ingest.chunk_bytes)
+        run = ingest_paths_transactional(conn, registry, rutas, config.ingest.chunk_bytes, rules)
         print(summarize(conn, run))
         if run.errors:
             for error in run.errors:
