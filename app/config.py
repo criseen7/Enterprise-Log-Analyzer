@@ -69,6 +69,15 @@ class DatabaseConfig:
 
 @dataclass(frozen=True)
 class AnalysisConfig:
+    # Reglas de clasificación de error (app/analysis/error_rules.yaml).
+    #
+    # Es Path y no un literal dentro del código porque las reglas son datos de
+    # operación: un despliegue puede tener las suyas sin recompilar nada. Se
+    # resuelve a ruta absoluta igual que el resto, así que el watcher no depende
+    # del directorio de trabajo.
+    rules_path: Path = field(
+        default=Path("app/analysis/error_rules.yaml"), metadata={"env": "ELA_ERROR_RULES_PATH"}
+    )
     min_incident_severity: int = field(
         default=40, metadata={"env": "ELA_MIN_INCIDENT_SEVERITY"}
     )
@@ -282,6 +291,11 @@ def _validate(settings: Settings) -> None:
     except Exception as exc:  # noqa: BLE001 - tz puede fallar por muchas razones
         problems.append(f"ingest.default_timezone inválido: {settings.ingest.default_timezone!r} ({exc})")
 
+    if not settings.analysis.rules_path.is_file():
+        problems.append(
+            f"analysis.rules_path no existe: {settings.analysis.rules_path} "
+            "(sin reglas no hay fingerprint ni categoría)"
+        )
     if not 0 <= settings.analysis.min_incident_severity <= 100:
         problems.append("analysis.min_incident_severity debe estar en 0..100")
     if settings.analysis.incident_threshold <= 0:
