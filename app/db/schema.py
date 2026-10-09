@@ -12,6 +12,6 @@ bases que se quedan en un esquema viejo sin avisar.
 from pathlib import Path
 
 SCHEMA_PATH = Path(__file__).with_name("schema.sql")
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 __all__ = ["SCHEMA_PATH", "SCHEMA_VERSION"]

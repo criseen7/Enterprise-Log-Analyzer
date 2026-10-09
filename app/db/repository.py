@@ -36,6 +36,7 @@ EVENT_COLUMNS = (
     "logger",
     "message",
     "fingerprint",
+    "category",
     "raw_line",
     "parsed_ok",
     "parse_error",
@@ -225,7 +226,20 @@ def update_progress(
 # --- inserción de eventos ----------------------------------------------
 
 
-def event_row(file_id: int, offset: int, result: ParseResult, fingerprint: str | None = None):
+def event_row(
+    file_id: int,
+    offset: int,
+    result: ParseResult,
+    fingerprint: str | None = None,
+    category: str | None = None,
+):
+    """Fila de `events` en el orden de `EVENT_COLUMNS`.
+
+    `fingerprint` y `category` se calculan fuera, en el ingestor: decidirlos aquí
+    obligaría a que `event_row` cargara las reglas, que son configuración, y a
+    que todo caller las tuviera. Quien inserta decide cómo clasificar; la base
+    sólo guarda lo decidido.
+    """
     return (
         file_id,
         offset,
@@ -239,6 +253,7 @@ def event_row(file_id: int, offset: int, result: ParseResult, fingerprint: str |
         result.logger,
         result.message,
         fingerprint,
+        category,
         result.raw_line,
         1 if result.parsed_ok else 0,
         result.parse_error,

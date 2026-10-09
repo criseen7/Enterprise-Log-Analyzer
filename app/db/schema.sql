@@ -50,6 +50,10 @@ CREATE TABLE IF NOT EXISTS events (
     -- idempotencia: reingerir el mismo archivo no puede duplicar eventos (D3).
     offset         INTEGER NOT NULL,
     fingerprint    TEXT,
+    -- Categoría asignada por `analysis/error_rules.yaml` en el momento de la
+    -- ingesta: queda congelada en el evento para que un cambio posterior de
+    -- reglas no reescriba el histórico. Se recalcula sólo con --backfill.
+    category       TEXT,
     timestamp_utc  TEXT,
     timestamp_raw  TEXT,
     source_tz      TEXT,
@@ -74,6 +78,7 @@ CREATE INDEX IF NOT EXISTS idx_events_fp          ON events (fingerprint);
 CREATE INDEX IF NOT EXISTS idx_events_sev_ts      ON events (severity, timestamp_utc);
 CREATE INDEX IF NOT EXISTS idx_events_service_ts  ON events (service, timestamp_utc);
 CREATE INDEX IF NOT EXISTS idx_events_parsed      ON events (parsed_ok, parse_error);
+CREATE INDEX IF NOT EXISTS idx_events_cat_ts      ON events (category, timestamp_utc);
 -- El índice de UNIQUE(file_id, offset) lo crea SQLite automáticamente.
 
 -- Incidentes: un registro por fingerprint problemático, no por evento.
