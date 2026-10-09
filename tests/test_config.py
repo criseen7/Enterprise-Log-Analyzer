@@ -16,7 +16,7 @@ from app.config import (
 )
 from app.db.migrations import applied_versions, migrate, status
 from app.db.schema import SCHEMA_VERSION
-from tests.helpers import EnvSandbox, TempDbTestCase
+from tests.helpers import FIXTURES_DIR, EnvSandbox, TempDbTestCase
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -207,17 +207,20 @@ class MigrationTests(TempDbTestCase):
         self.assertEqual(status(self.db_path), (SCHEMA_VERSION, SCHEMA_VERSION))
 
     def test_old_v1_database_upgrades_without_losing_schema(self):
-        """Una base v1 existente debe llegar a v2 conservando su esquema.
+        """Una base v1 real debe llegar a SCHEMA_VERSION conservando sus datos.
 
-        Es el caso que la baseline no cubre: `CREATE TABLE IF NOT EXISTS` no añade
-        la columna `generation` a una tabla que ya existe, así que una base
-        antigua quedaría registrada como v2 con el esquema de v1. Si este test no
-        existe, esa divergencia solo se ve en la máquina que tenía datos viejos.
+        Usa `tests/fixtures/schema_v1.sql`, instantánea del esquema v1. La
+        alternativa —aplicar la baseline actual y registrarla como v1— crea una
+        base que nunca existió: ya trae `generation` y `category`, y los deltas
+        pasan por casualidad o fallan con `duplicate column` sin que el test
+        explique nada. Es justo la divergencia que la baseline no cubre:
+        `CREATE TABLE IF NOT EXISTS` no añade columnas a una tabla que ya existe.
         """
-        from app.db.migrations import _BASELINE_VERSION, _deltas
+        from app.db.migrations import _BASELINE_VERSION, _deltas, _record
 
-        migrate(self.db_path, target=_BASELINE_VERSION)
         conn = self.connect()
+        conn.executescript((FIXTURES_DIR / "schema_v1.sql").read_text(encoding="utf-8"))
+        _record(conn, _BASELINE_VERSION)
         conn.execute(_FILE_ROW)
         conn.execute(
             "INSERT INTO events (file_id, offset, raw_line) VALUES (1, 0, 'pre-v2')"
@@ -230,6 +233,8 @@ class MigrationTests(TempDbTestCase):
         conn = self.connect()
         columnas = {r[1] for r in conn.execute("PRAGMA table_info(log_files)")}
         self.assertIn("generation", columnas, "la migración 2 debe añadir generation")
+        eventos = {r[1] for r in conn.execute("PRAGMA table_info(events)")}
+        self.assertIn("category", eventos, "la migración 3 debe añadir category")
         self.assertEqual(
             conn.execute("SELECT COUNT(*) FROM events").fetchone()[0],
             1,
