@@ -24,7 +24,29 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 SERVICES = ["order-api", "billing-api", "gateway", "worker"]
-LEVELS = ["INFO", "INFO", "INFO", "WARN", "ERROR"]
+
+# (nivel, mensaje, peso). El nivel y el mensaje van juntos a propósito: si se
+# eligen por separado, "pedido creado" aparece a nivel ERROR y el dashboard de
+# la demo se llena de errores que no son nada, lo que deja "top errores",
+# fingerprint y categorías sin interpretables. Así, el generador produce un
+# dataset que se parece a un sistema real.
+JSON_EVENTS: list[tuple[str, str, int]] = [
+    ("INFO", "pedido creado", 26),
+    ("INFO", "caché invalidada", 10),
+    ("INFO", "café ñoño 🚀 mensaje con emoji", 6),
+    ("WARN", "reintento 2 de 5", 12),
+    ("ERROR", "pago rechazado por el banco", 10),
+    ("ERROR", "timeout de consulta", 8),
+    ("ERROR", "Failed login for user admin from {ip} (code={code})", 8),
+]
+
+# Igual que arriba: el nivel es una función del mensaje, no una tirada aparte.
+WEBLOGIC_EVENTS: list[tuple[str, str, int]] = [
+    ("INFO", "transacción completada", 14),
+    ("WARNING", "transacción revertida", 8),
+    ("SEVERE", "timeout de consulta", 8),
+    ("SEVERE", "Pool exhausted: 0 de 20 disponibles", 8),
+]
 APACHE_PATHS = [
     "/api/orders",
     "/api/orders/4821",
@@ -59,23 +81,26 @@ def apache_line(now: datetime) -> str:
     )
 
 
+def _pick(events: list[tuple[str, str, int]]) -> tuple[str, str]:
+    level, message, *_ = random.choices(events, weights=[e[2] for e in events])[0]
+    if "{ip}" in message:
+        message = message.format(
+            ip=f"10.0.{random.randint(0, 3)}.{random.randint(2, 254)}",
+            code=random.randint(1, 30),
+        )
+    return level, message
+
+
 def json_line(now: datetime) -> str:
+    level, message = _pick(JSON_EVENTS)
     return json.dumps(
         {
             "timestamp": now.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z",
-            "level": random.choice(LEVELS),
+            "level": level,
             "service": random.choice(SERVICES),
             "logger": "com.acme.order.OrderService",
             "traceId": f"{random.getrandbits(64):016x}",
-            "message": random.choice(
-                [
-                    "pedido creado",
-                    "pago rechazado por el banco",
-                    "reintento 2 de 5",
-                    "caché invalidada",
-                    "café ñoño 🚀 mensaje con emoji",
-                ]
-            ),
+            "message": message,
             "durationMs": random.randint(4, 4000),
         },
         ensure_ascii=False,
@@ -83,11 +108,11 @@ def json_line(now: datetime) -> str:
 
 
 def weblogic_line(now: datetime) -> str:
+    level, message = _pick(WEBLOGIC_EVENTS)
     return (
         f"{now:%d/%b/%Y} {now:%H:%M:%S}.{now.microsecond // 1000:03d} CEST "
         f"com.acme.order.OrderDao : [pool-{random.randint(1, 4)}-thread-{random.randint(1, 8)}] "
-        f"{random.choice(['SEVERE', 'WARNING', 'INFO'])} | "
-        f"{random.choice(['Pool exhausted: 0 de 20 disponibles', 'transacción revertida', 'timeout de consulta'])}"
+        f"{level} | {message}"
     )
 
 
@@ -112,6 +137,12 @@ def build(out: Path, lines: int, seed: int) -> list[Path]:
                     handle.write(frame + "\n")
 
     # Una línea que ningún patrón reconoce: la cobertura no puede ser 100%.
+    #
+    # Se antepone un registro JSON a propósito. Si quedara justo detrás de un
+    # stack trace, `assemble()` la trataría como continuación de una entrada
+    # multilínea y acabaría dentro del evento anterior: seguiría sin parsearse,
+    # pero `parsed_ok` sería 1 y la cobertura saldría falsa (100%).
+    handle.write(json_line(_timestamps(start, 1)[0]) + "\n")
     handle.write("[runtime] arranque del proceso, línea sin formato de log\n")
     handle.close()
 
