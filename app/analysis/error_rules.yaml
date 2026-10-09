@@ -1,0 +1,124 @@
+# Reglas de clasificación de errores — `python -m app.analysis`
+#
+# Qué decide una regla: la **categoría** de un evento. La categoría forma parte
+# del fingerprint (ver app/analysis/fingerprint.py) y es el texto que ve el
+# usuario en "top errores"; sin ella, agrupar por mensaje suelto produce
+# etiquetas crudas y sin agrupar nada de lo que son dos problemas distintos.
+#
+# Cómo se evalúan:
+#   * Primera regla que coincida gana, así que el orden es la prioridad:
+#     lo específico antes que lo genérico.
+#   * `patterns` son regex con `re.IGNORECASE`, evaluadas contra el **message**
+#     ya normalizado por el parser (para Apache es `{method} {path} -> {status}`,
+#     así que las reglas HTTP miran la cola de la frase).
+#   * La clasificación ocurre en el momento de la ingesta y se guarda en
+#     `events.category`: cambiar este archivo no reescribe el histórico, sólo lo
+#     que entre después. Recalcular es explícito: `--backfill --recalc`.
+#
+# Un YAML mal formado rompe el arranque, nunca la ingesta: la validación está
+# en `app/analysis/errors.py` y falla al cargar.
+
+rules:
+  # --- acceso: se reconocen por mensaje, no por status ---------------------
+  - id: failed-login
+    category: auth
+    description: autenticación rechazada
+    patterns:
+      - "failed login"
+      - "login failed"
+      - "authentication failed"
+      - "invalid password"
+      - "access denied"
+      - "acceso denegado"
+      - "credenciales inválidas"
+
+  # --- HTTP por status (sólo llegan aquí las líneas con "-> NNN") ----------
+  - id: http-server-error
+    category: http-5xx
+    description: respuesta 5xx del servidor
+    patterns:
+      - "->\\s*5\\d{2}\\s*$"
+  - id: http-client-error
+    category: http-4xx
+    description: respuesta 4xx del cliente
+    patterns:
+      - "->\\s*4\\d{2}\\s*$"
+
+  # --- plataforma ---------------------------------------------------------
+  - id: null-pointer
+    category: null-pointer
+    description: acceso a referencias nulas
+    patterns:
+      - "NullPointerException"
+      - "null pointer"
+      - "IndexOutOfBounds"
+      - "ClassCastException"
+
+  - id: connection-refused
+    category: connection
+    description: la conexión no se establece
+    patterns:
+      - "connection refused"
+      - "connection reset"
+      - "connection closed"
+      - "no route to host"
+      - "conexión rechazada"
+
+  - id: query-timeout
+    category: timeout
+    description: espera agotada (consulta, conexión o lectura)
+    patterns:
+      - "timeout"
+      - "timed out"
+      - "timeout de consulta"
+      - "connection timeout"
+      - "read timed out"
+
+  - id: resource-exhausted
+    category: resource-exhausted
+    description: se acabaron recursos (pool, memoria, conexiones)
+    patterns:
+      - "pool exhausted"
+      - "too many connections"
+      - "no available connection"
+      - "sin conexiones disponibles"
+      - "out of memory"
+      - "heap space"
+      - "java.lang.OutOfMemoryError"
+
+  - id: sql-error
+    category: sql
+    description: fallo de base de datos
+    patterns:
+      - "SQLException"
+      - "ORA-\\d+"
+      - "syntax error"
+      - "deadlock"
+      - "constraint failed"
+
+  - id: transaction-rollback
+    category: transaction
+    description: transacción revertida
+    patterns:
+      - "transacci[oó]n revertida"
+      - "transaction rolled back"
+      - "rollback"
+      - "rollback failed"
+
+  - id: storage-full
+    category: storage
+    description: disco o cuota agotados
+    patterns:
+      - "no space left"
+      - "disk full"
+      - "disk quota exceeded"
+      - "sin espacio en disco"
+
+  - id: payment-rejected
+    category: payment
+    description: pago rechazado por el emisor
+    patterns:
+      - "pago rechazado"
+      - "payment declined"
+      - "card declined"
+      - "insufficient funds"
