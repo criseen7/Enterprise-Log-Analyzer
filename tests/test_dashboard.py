@@ -41,7 +41,7 @@ SAMPLE_LOG = "".join(
 def _page_script(module: str) -> str:
     return (
         "from app.ui.data import EventFilters\n"
-        f"from app.ui.pages import {module}\n"
+        f"from app.ui.views import {module}\n"
         f"{module}.render(EventFilters())\n"
     )
 
