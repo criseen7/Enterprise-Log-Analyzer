@@ -4,7 +4,7 @@ Plataforma de observabilidad y análisis de logs para entornos empresariales. Ca
 de forma incremental, los normaliza, detecta errores críticos, agrupa patrones
 recurrentes y expone métricas en un dashboard interactivo con exportación de reportes.
 
-**Estado:** en desarrollo activo. Fases 0–5 completadas (177 tests + 5 smoke tests dashboard, saltados sin Streamlit) — ver
+**Estado:** en desarrollo activo. Fases 0–5 completadas (189 tests; 7 son smoke del dashboard y se saltan sin Streamlit) — ver
 [docs/PLAN.md](docs/PLAN.md).
 
 ---
@@ -143,7 +143,12 @@ python -m app.analysis --anomalies      # z-score sobre el conteo horario
 python -m app.analysis --patterns       # patrones en la última ventana
 python -m app.analysis --backfill       # rellena la huella de datos antiguos
 
-# 5. Lanzar el dashboard (Fase 4)
+# 5. Alertas: abrir/actualizar incidentes y exportarlos (Fase 5)
+python -m app.alerts                    # evalúa la ventana y abre incidentes
+python -m app.alerts --list --status OPEN
+python -m app.alerts --export csv > incidents.csv
+
+# 6. Lanzar el dashboard (Fase 4)
 streamlit run app/ui/app.py
 ```
 
@@ -189,7 +194,7 @@ python -m tests.regenerate_golden   # regenera (revisar el diff antes de aceptar
    IPs y hex colapsan a placeholders) para agrupar lo que en realidad es el mismo
    error, más recurrencia por ventana y anomalías por z-score.
 5. ✅ **Dashboard** — KPIs, errores por hora, top errores, timeline, heatmap día×hora (4 páginas: Overview/Events/Incidents/Settings).
-6. ✅ **Alertas** — incidentes con dedup por fingerprint y cooldown (vía notified_at); export CSV (utf-8-sig) y HTML autocontenido.
+6. ✅ **Alertas** — incidentes con dedup por fingerprint y cooldown (vía `notified_at`); banner + lista y estados OPEN/ACK/RESOLVED en el dashboard; export CSV (utf-8-sig) y HTML autocontenido; CLI `python -m app.alerts`.
 7. **Métricas de la propia herramienta** — `ingest_runs` ya se registra en cada
    pasada; el panel llega con el dashboard.
 
@@ -347,11 +352,20 @@ Las decisiones están en [`docs/decisions/`](docs/decisions/). Lo ya verificado:
 - **Los presets de tiempo se anclan al último evento.** Con dataset histórico, "últimas 24h" relativo a hoy da cero; el preset calcula desde `MAX(timestamp_utc)`.
 - **El `LIKE` con `%` del usuario debe escaparse.** Sin `ESCAPE '\'`, buscar `"100%"` se convierte en comodín y deja de encontrar lo buscado (test explícito).
 - **`unparsed_only` anula `min_severity`.** Una línea sin parsear tiene severidad UNKNOWN (0); el filtro por defecto ≥45 y el toggle producían una tabla vacía sin explicación — ahora se fuerza `min_severity=0` al activar el toggle.
+
+**Fase 5 — alertas**
+- **Un incidente es una huella, no un evento.** 5.000 timeouts idénticos son 5.000 filas de `events` y **una** de `incidents`. El `UNIQUE(fingerprint)` hace el upsert trivial; contar por evento habría creado 5.000 incidentes.
+- **El cooldown pertenece a la fila, no al proceso.** `notified_at` persiste para que reiniciar el servicio no vuelva a notificar lo mismo. Un cooldown en memoria se pierde con el primer reinicio.
+- **Reabrir reinicia el cooldown.** Si `RESOLVED → OPEN` conserva `notified_at`, el primer rebrote queda silenciado. Un incidente reabierto es nuevo para el cooldown (`notified_at = NULL`).
+- **El estado canónico no se abrevia en la base.** El esquema guarda `ACKNOWLEDGED` y la tabla muestra `ACK`; guardar la abreviatura habría dejado dos vocabularios para el mismo valor.
+- **`utf-8-sig` no es cosmético.** El BOM es lo que hace que Excel abra el CSV con los acentos correctos. Sin él, "petición" se ve como mojibake y el export parece roto.
+- **El HTML de export es autocontenido a propósito.** Estilos embebidos y sin `<script>`: un archivo que se abre sin conexión y sin dependencias es lo que se puede adjuntar a un ticket.
+- **Escribir en el dashboard es una excepción señalada.** Incidents es la única página que muta (evaluar y cambiar estado); lecturas con `read_only=True`, escrituras con `connection()` + `clear_caches()`.
+
 ---
 
-Los siguientes puntos del plan (`cache_data`, filtros sin re-parseo) se
-documentarán en `docs/pitfalls.md` al cerrar las fases 4–5.
-
+Los puntos de `cache_data`, filtros sin re-parseo y cooldown de alertas quedan
+recogidos aquí; `docs/pitfalls.md` los consolida al cerrar la fase 6.
 ---
 
 ## Licencia

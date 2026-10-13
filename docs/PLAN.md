@@ -367,6 +367,10 @@ export **CSV** y **HTML** autocontenido · estados OPEN/ACK/RESOLVED
 **Aceptación — verificada:**
 - [x] 5.000 timeouts idénticos → **1 incidente**, 0 notificaciones repetidas (validado)
 - [x] El export CSV abre correctamente en Excel (encoding `utf-8-sig`)
+- [x] Banner de estado + lista de incidentes en la página Incidents
+- [x] Gestión de estados OPEN/ACKNOWLEDGED/RESOLVED (ACK/RESOLVED/OPEN en pantalla)
+- [x] Botones de export CSV/HTML autocontenido desde el dashboard
+- [x] CLI `python -m app.alerts` (`--list`, `--status`, `--export`, `--window`, `--no-evaluate`)
 
 ---
 
