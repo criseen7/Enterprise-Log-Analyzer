@@ -269,7 +269,7 @@ class MetricsTest(AnalysisDbTest):
         """Hasta `until` sin incluirlo: 09:00..10:30 son las horas 09 y 10."""
         self.ingest_fixture("analysis/errors_by_hour.log")
         obtenido = errors_by_hour(
-            self.conn, since="2026-10-05T09:00:00Z", until="2026-10-05T10:30:00Z"
+            self.conn, since="2026-10-05T09:00:00.000Z", until="2026-10-05T10:30:00.000Z"
         )
         self.assertEqual(obtenido, {"2026-10-05T09:00": 2, "2026-10-05T10:00": 1})
 
@@ -291,7 +291,7 @@ class MetricsTest(AnalysisDbTest):
         # 8 eventos, los dos "reintento" comparten huella -> 7 distintas.
         self.assertEqual(stats.fingerprints, 7)
         self.assertEqual(stats.coverage, 1.0)
-        self.assertEqual(stats.first_ts, "2026-10-05T09:05:00Z")
+        self.assertEqual(stats.first_ts, "2026-10-05T09:05:00.000Z")
 
     def test_por_categoria_agrupa_y_respeta_la_severidad(self):
         self.ingest_fixture("analysis/errors_by_hour.log")
@@ -324,7 +324,7 @@ class PatternsTest(AnalysisDbTest):
     def test_la_ventana_no_alcanza_lo_anticuado(self):
         file_id = self.seed_file()
         self.add_event(
-            file_id, "2026-10-05T10:00:00Z", fingerprint="fp-viejo", message="viejo"
+            file_id, "2026-10-05T10:00:00.000Z", fingerprint="fp-viejo", message="viejo"
         )
         self.add_event(
             file_id, "2026-10-05T12:00:00Z", fingerprint="fp-nuevo", message="nuevo"
@@ -334,7 +334,7 @@ class PatternsTest(AnalysisDbTest):
 
     def test_min_count_filtra_lo_que_no_se_repite(self):
         file_id = self.seed_file()
-        self.add_event(file_id, "2026-10-05T10:00:00Z", fingerprint="fp-unico")
+        self.add_event(file_id, "2026-10-05T10:00:00.000Z", fingerprint="fp-unico")
         self.assertEqual(
             recurring_patterns(self.conn, window_minutes=60, min_count=2, min_severity=ERROR),
             [],
@@ -406,7 +406,7 @@ class AnomaliesTest(AnalysisDbTest):
 class BackfillTest(AnalysisDbTest):
     def test_rellena_solo_lo_que_falta(self):
         file_id = self.seed_file()
-        self.add_event(file_id, "2026-10-05T10:00:00Z", message="timeout de consulta")
+        self.add_event(file_id, "2026-10-05T10:00:00.000Z", message="timeout de consulta")
         self.add_event(file_id, "2026-10-05T10:01:00Z", message="pedido creado")
 
         self.assertEqual(backfill(self.conn, self.rules), 2)
@@ -423,7 +423,7 @@ class BackfillTest(AnalysisDbTest):
         file_id = self.seed_file()
         self.add_event(
             file_id,
-            "2026-10-05T10:00:00Z",
+            "2026-10-05T10:00:00.000Z",
             message="timeout de consulta",
             fingerprint="huella-vieja",
         )

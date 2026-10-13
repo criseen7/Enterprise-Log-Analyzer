@@ -81,7 +81,7 @@ class SeverityTests(unittest.TestCase):
 class TimestampTests(unittest.TestCase):
     def test_offset_is_converted_to_utc(self):
         moment, zone = parse_timestamp("2026-10-05T08:03:22-06:00", (ISO8601,))
-        self.assertEqual(to_utc_iso(moment), "2026-10-05T14:03:22Z")
+        self.assertEqual(to_utc_iso(moment), "2026-10-05T14:03:22.000Z")
         self.assertEqual(zone, "-0600")
 
     def test_naive_timestamp_uses_default_zone(self):
@@ -90,7 +90,7 @@ class TimestampTests(unittest.TestCase):
             ("%Y-%m-%d %H:%M:%S",),
             default_timezone="America/Mexico_City",
         )
-        self.assertEqual(to_utc_iso(moment), "2026-10-05T14:03:22Z")
+        self.assertEqual(to_utc_iso(moment), "2026-10-05T14:03:22.000Z")
         # La zona asumida queda registrada: una suposición sin rastro es un bug oculto.
         self.assertEqual(zone, "America/Mexico_City")
 
@@ -100,7 +100,7 @@ class TimestampTests(unittest.TestCase):
             ("%d/%m/%Y:%H:%M:%S %z",),
             english_months=True,
         )
-        self.assertEqual(to_utc_iso(moment), "2026-10-05T20:03:22Z")
+        self.assertEqual(to_utc_iso(moment), "2026-10-05T20:03:22.000Z")
         self.assertEqual(zone, "-0600")
 
     def test_replace_english_months(self):
@@ -128,7 +128,7 @@ class TimestampTests(unittest.TestCase):
         moment, zone = parse_timestamp(
             "2026-10-05T08:03:22-06:00", (ISO8601,), default_timezone="No/Existe"
         )
-        self.assertEqual(to_utc_iso(moment), "2026-10-05T14:03:22Z")
+        self.assertEqual(to_utc_iso(moment), "2026-10-05T14:03:22.000Z")
 
 
 class PatternLoadingTests(unittest.TestCase):
@@ -191,7 +191,7 @@ class PatternLoadingTests(unittest.TestCase):
         self.assertIsNone(specs["json"].default_timezone)
         registry = Registry(specs=list(specs.values()), default_timezone="America/Mexico_City")
         result = registry.parse_line('{"timestamp":"2026-10-05 08:03:22","level":"INFO","message":"a"}')
-        self.assertEqual(result.timestamp_utc, "2026-10-05T14:03:22Z")
+        self.assertEqual(result.timestamp_utc, "2026-10-05T14:03:22.000Z")
         self.assertEqual(result.source_tz, "America/Mexico_City")
 
     def test_duplicate_names_fail(self):
@@ -358,7 +358,7 @@ class TimezoneEquivalenceTests(unittest.TestCase):
         ]
         stamps = {registry.parse_line(f).timestamp_utc for f in forms}
         self.assertEqual(len(stamps), 1, f"el mismo instante produjo {stamps}")
-        self.assertEqual(stamps.pop(), "2026-10-05T14:03:22Z")
+        self.assertEqual(stamps.pop(), "2026-10-05T14:03:22.000Z")
 
     def test_naive_and_offset_agree_when_zone_is_declared(self):
         registry = Registry.from_directory(PATTERNS_DIR, default_timezone="America/Mexico_City")
