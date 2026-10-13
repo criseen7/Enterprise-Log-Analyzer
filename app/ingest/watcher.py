@@ -22,6 +22,7 @@ duplicado.
 
 from __future__ import annotations
 
+import fnmatch
 import time
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
@@ -134,8 +135,40 @@ def _watch_with_watchdog(config, conn, registry, on_cycle, rules) -> int:  # noq
         def on_any_event(self, event):  # noqa: ANN001 - API de watchdog
             if getattr(event, "is_directory", False):
                 return
-            src = Path(getattr(event, "src_path", ""))
-            dest = Path(getattr(event, "dest_path", "") or "")
+
+            log_dir = config.paths.log_dir.resolve()
+            allowed_names = set()
+            for pattern in config.ingest.include_patterns:
+                try:
+                    allowed_names.update(p.name for p in log_dir.glob(pattern) if p.is_file())
+                except Exception:
+                    pass
+
+            def _valid(raw: str | None) -> Path | None:
+                if not raw:
+                    return None
+                try:
+                    p = Path(raw).resolve()
+                except Exception:
+                    return None
+                try:
+                    if not p.is_relative_to(log_dir):
+                        return None
+                except AttributeError:
+                    try:
+                        p.relative_to(log_dir)
+                    except Exception:
+                        return None
+                if p.name not in allowed_names:
+                    try:
+                        if not any(fnmatch.fnmatchcase(p.name, pat) for pat in config.ingest.include_patterns):
+                            return None
+                    except Exception:
+                        pass
+                return p
+
+            src = _valid(getattr(event, "src_path", None))
+            dest = _valid(getattr(event, "dest_path", None))
             # `moved` llega como src (origen) y dest (destino): se necesitan
             # ambos, porque el rename deja la identidad en el inode y la ruta
             # vieja ya no existe.
