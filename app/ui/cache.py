@@ -33,6 +33,8 @@ from app.analysis.metrics import (
     top_errors,
 )
 from app.analysis.patterns import recurring_patterns
+from app.alerts.incidents import incident_counts as _incident_counts
+from app.alerts.incidents import list_incidents
 from app.config import get_settings
 from app.db.connection import connection
 from app.db.repository import recent_runs
@@ -151,6 +153,19 @@ def recurrence(window_minutes: int = 15, min_count: int = 2, min_severity: int =
 
 
 @st.cache_data(ttl=_TTL, show_spinner=False)
+def incidents(status: str | None = None, limit: int = 200) -> list[dict]:
+    """Incidentes ya persistidos. `status=None` los trae todos."""
+    with connection(read_only=True) as conn:
+        return _dicts(list_incidents(conn, status=status, limit=limit))
+
+
+@st.cache_data(ttl=_TTL, show_spinner=False)
+def incident_counts() -> dict[str, int]:
+    with connection(read_only=True) as conn:
+        return _incident_counts(conn)
+
+
+@st.cache_data(ttl=_TTL, show_spinner=False)
 def ingest_runs(limit: int = 10) -> list[dict]:
     with connection(read_only=True) as conn:
         return _dicts(recent_runs(conn, limit=limit))
@@ -193,6 +208,8 @@ __all__ = [
     "filter_options",
     "heatmap",
     "hourly_series",
+    "incident_counts",
+    "incidents",
     "ingest_runs",
     "overview_stats",
     "ranking_errors",

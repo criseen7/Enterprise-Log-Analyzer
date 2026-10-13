@@ -17,6 +17,7 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
+from app.alerts.incidents import status_label
 from app.parser.severity import severity_name
 from app.ui.theme import shorten
 
@@ -153,6 +154,37 @@ def runs_table(rows: list[dict]) -> None:
     )
 
 
+def incidents_table(rows: list[dict]) -> None:
+    if not rows:
+        st.info("No hay incidentes registrados.")
+        return
+    frame = pd.DataFrame(
+        {
+            "sev": [severity_name(row["severity"]) for row in rows],
+            "estado": [status_label(row["status"]) for row in rows],
+            "categoría": [row["category"] or _DASH for row in rows],
+            "eventos": [row["event_count"] for row in rows],
+            "muestra": [shorten(row["sample_message"], 110) for row in rows],
+            "huella": [row["fingerprint"] or _DASH for row in rows],
+            "primero": _ts([row["first_seen"] for row in rows]),
+            "último": _ts([row["last_seen"] for row in rows]),
+            "notificado": _ts([row["notified_at"] for row in rows]),
+        }
+    )
+    st.dataframe(
+        frame,
+        use_container_width=True,
+        hide_index=True,
+        height=min(90 + 35 * max(len(frame), 1), 620),
+        column_config={
+            "primero": st.column_config.DatetimeColumn("primero", format="MM-DD HH:mm"),
+            "último": st.column_config.DatetimeColumn("último", format="MM-DD HH:mm"),
+            "notificado": st.column_config.DatetimeColumn("notificado", format="MM-DD HH:mm:ss"),
+            "muestra": st.column_config.TextColumn("mensaje de muestra", width="large"),
+        },
+    )
+
+
 def files_table(rows: list[dict]) -> None:
     if not rows:
         st.info("No hay archivos vigilados todavía.")
@@ -181,6 +213,7 @@ __all__ = [
     "event_inspector",
     "events_table",
     "files_table",
+    "incidents_table",
     "ranking_table",
     "runs_table",
     "spikes_table",
