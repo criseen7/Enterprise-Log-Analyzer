@@ -1,0 +1,36 @@
+# Control de versiones y entornos locales
+.git
+.gitignore
+.venv
+venv
+env
+
+# Datos de ejecución: se montan como volúmenes, no se hornean en la imagen
+data
+logs
+exports
+
+# Tests, documentación y material de aprendizaje: no hacen falta para ejecutar
+tests
+docs
+tools
+*.md
+Makefile
+
+# Cachés de Python y de herramientas
+__pycache__
+*.py[cod]
+.pytest_cache
+.ruff_cache
+.mypy_cache
+.coverage
+htmlcov
+
+# Config y secretos locales
+.env
+config.local.yaml
+
+# Ficheros de Docker (se leen para construir, no forman parte del contexto útil)
+Dockerfile
+.dockerignore
+docker-compose.yml

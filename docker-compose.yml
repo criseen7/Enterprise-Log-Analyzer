@@ -1,0 +1,70 @@
+# Dos servicios, no uno: `analyzer` es el único escritor (watcher) y `dashboard`
+# sólo lee salvo las acciones explícitas del usuario. Separarlos elimina la
+# contención de escritura de SQLite por diseño y permite reiniciar el dashboard
+# sin interrumpir la ingesta.
+#
+# Los tres montajes tienen un propósito cada uno:
+#   - logs    -> bind de sólo lectura: los logs reales nunca se escriben.
+#   - data    -> volumen con nombre: la DB sobrevive a `down` y `build`.
+#   - exports -> volumen con nombre: los reportes sobreviven igual que la DB.
+
+services:
+  analyzer:
+    build: .
+    image: enterprise-log-analyzer:local
+    command: ["python", "-m", "app.ingest", "--watch"]
+    restart: unless-stopped
+    environment:
+      ELA_PROJECT_ROOT: /app
+      ELA_LOG_DIR: /logs
+      ELA_DB_PATH: /data/app.db
+      ELA_EXPORT_DIR: /exports
+    volumes:
+      - ./logs:/logs:ro
+      - ela-data:/data
+      - ela-exports:/exports
+    healthcheck:
+      # `--status` migra y luego lee: devuelve 0 en cuanto el esquema existe,
+      # así que marca "listo" justo después de crear/verificar la base.
+      test: ["CMD", "python", "-m", "app.ingest", "--status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+  dashboard:
+    build: .
+    image: enterprise-log-analyzer:local
+    command: ["streamlit", "run", "app/ui/app.py"]
+    restart: unless-stopped
+    depends_on:
+      analyzer:
+        # Esperar a que `analyzer` esté sano evita que dos procesos apliquen la
+        # baseline a la vez: el primero en escribir registra la versión y el
+        # segundo chocaría con el UNIQUE de `schema_version`.
+        condition: service_healthy
+    ports:
+      - "8501:8501"
+    environment:
+      ELA_PROJECT_ROOT: /app
+      ELA_LOG_DIR: /logs
+      ELA_DB_PATH: /data/app.db
+      ELA_EXPORT_DIR: /exports
+    volumes:
+      - ./logs:/logs:ro
+      - ela-data:/data
+      - ela-exports:/exports
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import sys,urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8501/_stcore/health', timeout=3).read().strip() == b'ok' else 1)"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+volumes:
+  ela-data:
+  ela-exports:
