@@ -339,17 +339,19 @@ sintéticos · CLI (`python -m app.ingest`)
 
 ---
 
-### Fase 4 — Dashboard
+### Fase 4 — Dashboard ✅ *completada 2026-10-12
 
 **Tareas:** 4 páginas (Overview / Events / Incidents / Settings) · Plotly: línea
 errores-hora, barra top errores, **heatmap día×hora**, area apilada por severidad ·
 filtros en sidebar · `st.cache_data(ttl=30)` para queries, `st.cache_resource` **solo**
 para conexiones · estados vacíos accionables · auto-seed si la DB está vacía
 
-**Aceptación:**
-- Navegar el dataset sintético completo sin errores
-- Los filtros no obligan a re-parsear (usan índices)
-- Cero estado vacío sin explicación
+**Aceptación — verificada:**
+- [x] Navegar el dataset sintético completo sin errores (4 páginas: Overview/Events/Incidents/Settings)
+- [x] Los filtros no obligan a re-parsear (usan índices; `EXPLAIN QUERY PLAN` sin `SCAN events`)
+- [x] Cero estado vacío sin explicación (estados accionables con `kpis.empty_state`)
+- [x] 20 tests `app/ui/data.py` + 5 smoke tests dashboard OK (saltados solo sin Streamlit)
+- [x] Auto-seed si DB vacía, migración idempotente, caché TTL 30s
 
 > `cache_data` → queries (serializables). `cache_resource` → conexiones y singletons.
 > Cachear una `Connection` con `cache_data` falla: no es serializable.

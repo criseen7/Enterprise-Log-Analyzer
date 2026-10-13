@@ -4,7 +4,7 @@ Plataforma de observabilidad y análisis de logs para entornos empresariales. Ca
 de forma incremental, los normaliza, detecta errores críticos, agrupa patrones
 recurrentes y expone métricas en un dashboard interactivo con exportación de reportes.
 
-**Estado:** en desarrollo activo. Fases 0–3 completadas (152 tests) — ver
+**Estado:** en desarrollo activo. Fases 0–4 completadas (177 tests + 5 smoke tests dashboard, saltados sin Streamlit) — ver
 [docs/PLAN.md](docs/PLAN.md).
 
 ---
@@ -188,7 +188,7 @@ python -m tests.regenerate_golden   # regenera (revisar el diff antes de aceptar
 4. ✅ **Patrones recurrentes** — fingerprint por mensaje normalizado (dígitos, UUIDs,
    IPs y hex colapsan a placeholders) para agrupar lo que en realidad es el mismo
    error, más recurrencia por ventana y anomalías por z-score.
-5. *(Fase 4)* **Dashboard** — KPIs, errores por hora, top errores, timeline, heatmap día×hora.
+5. ✅ **Dashboard** — KPIs, errores por hora, top errores, timeline, heatmap día×hora (4 páginas: Overview/Events/Incidents/Settings).
 6. *(Fase 5)* **Alertas** — incidentes con dedup por fingerprint y cooldown; export CSV/HTML.
 7. **Métricas de la propia herramienta** — `ingest_runs` ya se registra en cada
    pasada; el panel llega con el dashboard.
@@ -339,6 +339,14 @@ Las decisiones están en [`docs/decisions/`](docs/decisions/). Lo ya verificado:
   rechazado" a `INFO` y "pedido creado" a `ERROR`: las queries eran correctas
   sobre datos tramposos. Nivel y mensaje van juntos en la misma lista.
 
+
+**Fase 4 — dashboard**
+- **Los filtros cambian el SQL, no el render.** Conectarlos a `st.cache_data` obliga a pasar los filtros como claves (hacen parte del cache key). Un error de diseño aquí es duplicar el mismo cache para rangos distintos y nunca invalidarlo.
+- **Una conexión por consulta.** Para el dashboard es mejor abrir/cerrar la conexión (WAL) que cachear una conexión: no es serializable y con `cache_data` explota. `connection(read_only=True)` es corta vida.
+- **El estado vacío debe ser accionable.** Si "no hay datos" no explica qué hacer, el usuario abandona. Cada pantalla añade `command` o instrucción concreta.
+- **Los presets de tiempo se anclan al último evento.** Con dataset histórico, "últimas 24h" relativo a hoy da cero; el preset calcula desde `MAX(timestamp_utc)`.
+- **El `LIKE` con `%` del usuario debe escaparse.** Sin `ESCAPE '\'`, buscar `"100%"` se convierte en comodín y deja de encontrar lo buscado (test explícito).
+- **`unparsed_only` anula `min_severity`.** Una línea sin parsear tiene severidad UNKNOWN (0); el filtro por defecto ≥45 y el toggle producían una tabla vacía sin explicación — ahora se fuerza `min_severity=0` al activar el toggle.
 ---
 
 Los siguientes puntos del plan (`cache_data`, filtros sin re-parseo) se
