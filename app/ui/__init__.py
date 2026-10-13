@@ -7,9 +7,13 @@ Módulos y separación de responsabilidades:
     data.py           consultas con filtros — **sin** Streamlit, testeables a mano
     cache.py          caché de Streamlit + conexiones de corta vida
     components/       filtros, KPIs, gráficos Plotly y tablas
-    pages/            Overview · Events · Incidents · Settings
+    views/            Overview · Events · Incidents · Settings
 
 La regla que hace testeable el paquete: `data.py` no importa Streamlit. Todo lo
 que decide *qué SQL corre* vive ahí y se prueba con `unittest`; lo que decide
-*cómo se ve* vive en `components/` y `pages/`.
+*cómo se ve* vive en `components/` y `views/`.
+
+La carpeta se llama `views/` y no `pages/` a propósito: Streamlit trata
+cualquier `pages/` junto al script principal como multipágina automática e
+imprime un warning al usar `st.navigation`.
 """
