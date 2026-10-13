@@ -189,6 +189,61 @@ class DashboardSmokeTests(unittest.TestCase):
             [h.value for h in at.subheader],
         )
 
+    def _open_incident(self, fingerprint: str = "fp-ui") -> None:
+        from app.alerts import evaluate_incidents
+        from app.db.connection import connection
+        from app.db.migrations import migrate
+
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        migrate(self.db_path)
+
+        with connection() as conn:
+            conn.execute(
+                "INSERT INTO log_files (path, first_seen, last_seen) VALUES (?, ?, ?)",
+                ("logs/app.log", "2026-10-05T12:00:00Z", "2026-10-05T12:00:00Z"),
+            )
+            for i in range(60):
+                minute = i % 60
+                conn.execute(
+                    "INSERT INTO events (file_id, offset, fingerprint, category, "
+                    "timestamp_utc, severity, message, raw_line, parsed_ok) "
+                    "VALUES (1, ?, ?, 'network', ?, 50, 'timeout', 'timeout', 1)",
+                    (i, fingerprint, f"2026-10-05T12:{minute:02d}:00Z"),
+                )
+            evaluate_incidents(conn, window_minutes=120, min_count=50)
+            conn.commit()
+
+    def test_incidents_muestra_banner_y_export_cuando_no_hay_nada(self):
+        from streamlit.testing.v1 import AppTest
+        from app.db.migrations import migrate
+
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        migrate(self.db_path)
+
+        at = AppTest.from_string(_page_script("incidents"), default_timeout=30)
+        at.run()
+        self.assert_no_exception(at)
+        self.assertTrue(
+            any("Sin incidentes abiertos" in s.value for s in at.success),
+            [s.value for s in at.success],
+        )
+        labels = [b.label for b in at.button]
+        self.assertIn("Evaluar ahora", labels)
+
+    def test_incidents_banner_avisa_de_abiertos(self):
+        from streamlit.testing.v1 import AppTest
+
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        self._open_incident()
+
+        at = AppTest.from_string(_page_script("incidents"), default_timeout=30)
+        at.run()
+        self.assert_no_exception(at)
+        self.assertTrue(
+            any("sin reconocer" in e.value for e in at.error),
+            [e.value for e in at.error],
+        )
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
