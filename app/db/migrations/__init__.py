@@ -30,6 +30,7 @@ _BASELINE_VERSION = 1
 _deltas: dict[int, Path] = {
     2: MIGRATIONS_DIR / "_002_log_files_identity.sql",
     3: MIGRATIONS_DIR / "_003_event_category.sql",
+    4: MIGRATIONS_DIR / "_004_timestamp_millis.sql",
 }
 
 # Versiones que entrega la baseline. Debe ser exactamente los deltas cargados:

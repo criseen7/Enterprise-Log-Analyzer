@@ -16,6 +16,7 @@ from datetime import UTC, datetime, timedelta
 
 import streamlit as st
 
+from app.parser.normalization import to_utc_iso
 from app.parser.severity import ERROR, FATAL, WARN
 from app.ui import cache, data
 from app.ui.theme import format_int
@@ -45,16 +46,22 @@ def _parse_iso(value: str | None) -> datetime | None:
 
 
 def _to_iso(moment: datetime) -> str:
-    """Mismo formato que la base (`...Z`, sin microsegundos) para poder comparar
-    por texto: `timestamp_utc` es TEXT y el orden lexicográfico es el temporal."""
-    return moment.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    """Delega en `to_utc_iso` para no duplicar el formato de la base.
+
+    `timestamp_utc` es TEXT: el orden lexicográfico solo coincide con el temporal
+    si la longitud es fija (`.mmmZ`). Repetir aquí un formato sin milisegundos
+    reintroduce el bug de los límites de rango.
+    """
+    return to_utc_iso(moment)
 
 
 def _preset_range(hours: int, latest: str | None) -> tuple[str | None, str | None]:
     last = _parse_iso(latest)
     if last is None:
         return None, None
-    return _to_iso(last - timedelta(hours=hours)), _to_iso(last)
+    # `until` es exclusivo: sumar 1 ms evita que el evento más reciente del
+    # dataset (que es `latest`) quede fuera del preset por el `<`.
+    return _to_iso(last - timedelta(hours=hours)), _to_iso(last + timedelta(milliseconds=1))
 
 
 def sidebar_filters() -> data.EventFilters:

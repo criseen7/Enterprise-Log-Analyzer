@@ -12,6 +12,7 @@ from datetime import datetime, timedelta, timezone
 
 from app.analysis.patterns import RecurringPattern, recurring_patterns
 from app.config import AnalysisConfig, get_settings
+from app.parser.normalization import to_utc_iso
 
 
 @dataclass(frozen=True)
@@ -26,25 +27,22 @@ class IncidentCandidate:
 
 
 def _utcnow_iso() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return to_utc_iso(datetime.now(timezone.utc))
 
 
 def _parse_iso(ts: str) -> datetime:
-    # timestamp_utc viene como YYYY-MM-DDTHH:MM:SSZ
-    if ts.endswith("Z"):
-        return datetime.strptime(ts.replace("Z", "+0000"), "%Y-%m-%dT%H:%M:%S%z")
-    try:
-        return datetime.fromisoformat(ts)
-    except Exception:
-        return datetime.strptime(ts, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    # `timestamp_utc` viene como YYYY-MM-DDTHH:MM:SS[.mmm]Z. `fromisoformat`
+    # entiende las dos formas; el fallback cubre cadenas sin sufijo de zona.
+    moment = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+    if moment.tzinfo is None:
+        return moment.replace(tzinfo=timezone.utc)
+    return moment
 
 
 def _format_iso(dt: datetime) -> str:
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
-    else:
-        dt = dt.astimezone(timezone.utc)
-    return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+    return to_utc_iso(dt)
 
 
 def _candidates_from_patterns(

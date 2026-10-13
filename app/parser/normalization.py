@@ -122,11 +122,13 @@ def to_utc_iso(value: datetime) -> str:
 
     Longitud fija y sufijo `Z` constante: es lo que permite que el orden
     lexicográfico de TEXT coincida con el orden cronológico en SQLite.
+
+    Los milisegundos se emiten siempre, incluso cuando son `.000`. Omitirlos
+    rompe la premisa: `'...22.481Z' < '...22Z'` porque `.` < `Z`, así que dos
+    timestamps del mismo segundo se ordenarían al revés.
     """
     as_utc = value.astimezone(UTC)
-    if as_utc.microsecond:
-        return as_utc.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
-    return as_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
+    return as_utc.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
 
 
 def floor_to_bucket(value: datetime, bucket: str) -> datetime:

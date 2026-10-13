@@ -16,6 +16,8 @@ from __future__ import annotations
 import sqlite3
 from datetime import UTC, datetime
 
+from app.parser.normalization import to_utc_iso
+
 VALID_STATUSES = ("OPEN", "ACKNOWLEDGED", "RESOLVED")
 
 # Abreviatura para pantalla. El valor persistido es siempre el canónico.
@@ -44,7 +46,7 @@ def status_label(status: str) -> str:
 
 
 def _utcnow_iso() -> str:
-    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return to_utc_iso(datetime.now(UTC))
 
 
 def list_incidents(
