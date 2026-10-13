@@ -358,15 +358,15 @@ para conexiones · estados vacíos accionables · auto-seed si la DB está vací
 
 ---
 
-### Fase 5 — Alertas
+### Fase 5 — Alertas ✅ *completada 2026-10-13*
 
 **Tareas:** reglas umbral+ventana · upsert de incidente por fingerprint ·
 **cooldown** vía `notified_at` · banner visual + lista de incidentes ·
 export **CSV** y **HTML** autocontenido · estados OPEN/ACK/RESOLVED
 
-**Aceptación:**
-- 5.000 timeouts idénticos → **1 incidente**, 0 notificaciones repetidas
-- El export CSV abre correctamente en Excel (encoding `utf-8-sig`)
+**Aceptación — verificada:**
+- [x] 5.000 timeouts idénticos → **1 incidente**, 0 notificaciones repetidas (validado)
+- [x] El export CSV abre correctamente en Excel (encoding `utf-8-sig`)
 
 ---
 

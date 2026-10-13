@@ -4,7 +4,7 @@ Plataforma de observabilidad y análisis de logs para entornos empresariales. Ca
 de forma incremental, los normaliza, detecta errores críticos, agrupa patrones
 recurrentes y expone métricas en un dashboard interactivo con exportación de reportes.
 
-**Estado:** en desarrollo activo. Fases 0–4 completadas (177 tests + 5 smoke tests dashboard, saltados sin Streamlit) — ver
+**Estado:** en desarrollo activo. Fases 0–5 completadas (177 tests + 5 smoke tests dashboard, saltados sin Streamlit) — ver
 [docs/PLAN.md](docs/PLAN.md).
 
 ---
@@ -189,7 +189,7 @@ python -m tests.regenerate_golden   # regenera (revisar el diff antes de aceptar
    IPs y hex colapsan a placeholders) para agrupar lo que en realidad es el mismo
    error, más recurrencia por ventana y anomalías por z-score.
 5. ✅ **Dashboard** — KPIs, errores por hora, top errores, timeline, heatmap día×hora (4 páginas: Overview/Events/Incidents/Settings).
-6. *(Fase 5)* **Alertas** — incidentes con dedup por fingerprint y cooldown; export CSV/HTML.
+6. ✅ **Alertas** — incidentes con dedup por fingerprint y cooldown (vía notified_at); export CSV (utf-8-sig) y HTML autocontenido.
 7. **Métricas de la propia herramienta** — `ingest_runs` ya se registra en cada
    pasada; el panel llega con el dashboard.
 
