@@ -1,5 +1,7 @@
 # Enterprise Log Analyzer
 
+![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
+
 Plataforma de observabilidad y análisis de logs para entornos empresariales. Carga logs
 de forma incremental, los normaliza, detecta errores críticos, agrupa patrones
 recurrentes y expone métricas en un dashboard interactivo con exportación de reportes.
@@ -439,4 +441,6 @@ Todo se agrega en SQL; ninguna carga la tabla `events` entera en memoria.
 
 ## Licencia
 
-Por definir.
+Distribuido bajo la [Licencia MIT](LICENSE).
+
+Copyright (c) 2026 Cristofer Hernandez
