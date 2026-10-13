@@ -2,27 +2,151 @@
 
 La diferencia entre esta página y Overview es el tiempo. Overview resume el
 dataset entero; aquí la pregunta es "¿qué se está repitiendo en la última
-ventana?" y "¿hay alguna hora que se salga de lo normal?".
+ventana?", "¿qué incidentes siguen abiertos?" y "¿hay alguna hora que se salga
+de lo normal?".
 
 Los umbrales salen de `config.yaml` (`analysis.window_minutes`,
 `analysis.incident_threshold`, `analysis.anomaly_zscore`), no de constantes en
 el código: en un despliegue real se ajustan sin tocar la aplicación.
 
-> La gestión de incidentes (estado OPEN/ACK/RESOLVED, cooldown y export) es la
-> Fase 5. Lo que hay aquí es la evidencia que la alimenta, no la entidad
-> `incidents`: mostrarla antes de que exista sería prometer algo que la base
-> todavía no garantiza.
+Esta página es la única del dashboard que **escribe** además de leer: abrir el
+incidente (evaluar) y mover su estado (OPEN/ACK/RESOLVED) son acciones del
+usuario. Las lecturas siguen con `read_only=True`; las escrituras van por
+`connection()` y limpian la caché, igual que en Settings.
 """
 
 from __future__ import annotations
 
 import streamlit as st
 
+from app.alerts import evaluate_incidents
+from app.alerts.incidents import set_incident_status, status_label
 from app.config import get_settings
+from app.db.connection import connection
+from app.reports import export_incidents_csv, export_incidents_html
 from app.ui import cache
 from app.ui.components import charts, filters, kpis, tables
 from app.ui.data import EventFilters
-from app.ui.theme import format_int
+from app.ui.theme import format_int, shorten
+
+
+def _banner(counts: dict[str, int]) -> None:
+    """Banner de estado. Es lo primero que se ve y lo que decide si hay que actuar."""
+    open_count = counts.get("OPEN", 0)
+    ack = counts.get("ACKNOWLEDGED", 0)
+    resolved = counts.get("RESOLVED", 0)
+
+    if open_count:
+        st.error(
+            f"{open_count} incidente{'s' if open_count != 1 else ''} sin reconocer. "
+            "Reconócelos abajo para silenciar el aviso, o resuélvelos si ya están atendidos.",
+            icon="🚨",
+        )
+    elif ack:
+        st.warning(
+            f"{ack} incidente{'s' if ack != 1 else ''} reconocido{'s' if ack != 1 else ''} "
+            "en curso. No hay incidentes nuevos sin reconocer.",
+            icon="⚠️",
+        )
+    else:
+        st.success("Sin incidentes abiertos.", icon="✅")
+
+    columns = st.columns(3)
+    columns[0].metric("OPEN", format_int(open_count))
+    columns[1].metric("ACK", format_int(ack))
+    columns[2].metric("RESOLVED", format_int(resolved))
+
+
+def _evaluate_now() -> None:
+    """Evalúa la ventana y hace upsert de incidentes. Es una escritura."""
+    with connection() as conn:
+        result = evaluate_incidents(conn)
+    cache.clear_caches()
+    if result["evaluated"]:
+        st.success(
+            f"{format_int(result['upserted'])} incidente(s) actualizado(s) "
+            f"en la ventana de {result['window_minutes']} min.",
+        )
+    else:
+        st.info(
+            f"Ningún fingerprint alcanzó el umbral de "
+            f"{result['incident_threshold']} ocurrencias en "
+            f"{result['window_minutes']} min. No se abrió ningún incidente."
+        )
+    st.rerun()
+
+
+def _manage(incidents: list[dict]) -> None:
+    """Cambia el estado de un incidente concreto."""
+    if not incidents:
+        return
+    labels = {
+        row["id"]: f"#{row['id']} · {status_label(row['status'])} · "
+        f"{format_int(row['event_count'])} eventos · {shorten(row['sample_message'], 70)}"
+        for row in incidents
+    }
+    chosen = st.selectbox(
+        "Incidente",
+        options=list(labels),
+        format_func=lambda i: labels[i],
+    )
+    row = next(r for r in incidents if r["id"] == chosen)
+    current = row["status"]
+
+    left, middle, right = st.columns(3)
+    if left.button(
+        "Reconocer (ACK)",
+        use_container_width=True,
+        disabled=current == "ACKNOWLEDGED",
+        help="Marca el incidente como visto sin cerrarlo.",
+    ):
+        with connection() as conn:
+            set_incident_status(conn, chosen, "ACKNOWLEDGED")
+        cache.clear_caches()
+        st.rerun()
+    if middle.button(
+        "Resolver",
+        use_container_width=True,
+        disabled=current == "RESOLVED",
+        help="Cierra el incidente. Un rebrote posterior lo reabrirá como nuevo.",
+    ):
+        with connection() as conn:
+            set_incident_status(conn, chosen, "RESOLVED")
+        cache.clear_caches()
+        st.rerun()
+    if right.button(
+        "Reabrir (OPEN)",
+        use_container_width=True,
+        disabled=current == "OPEN",
+        help="Reabre y reinicia el cooldown: la próxima ocurrencia vuelve a notificar.",
+    ):
+        with connection() as conn:
+            set_incident_status(conn, chosen, "OPEN")
+        cache.clear_caches()
+        st.rerun()
+
+
+def _exports() -> None:
+    with connection(read_only=True) as conn:
+        csv_bytes = export_incidents_csv(conn)
+        html_text = export_incidents_html(conn)
+    left, right = st.columns(2)
+    left.download_button(
+        "Exportar CSV",
+        data=csv_bytes,
+        file_name="incidents.csv",
+        mime="text/csv",
+        use_container_width=True,
+        help="UTF-8 con BOM: abre en Excel sin problemas de acentos.",
+    )
+    right.download_button(
+        "Exportar HTML",
+        data=html_text,
+        file_name="incidents.html",
+        mime="text/html",
+        use_container_width=True,
+        help="Archivo autocontenido: se abre sin conexión ni dependencias.",
+    )
 
 
 def render(selected: EventFilters) -> None:
@@ -30,6 +154,31 @@ def render(selected: EventFilters) -> None:
     st.title("Incidents")
     st.caption(filters.describe(selected))
 
+    counts = cache.incident_counts()
+    _banner(counts)
+
+    st.divider()
+    st.subheader("Gestión de incidentes")
+    st.caption(
+        "`OPEN` espera reconocimiento; `ACK` está visto y en curso; `RESOLVED` "
+        "está cerrado. Reabrir reinicia el cooldown para que la próxima "
+        "ocurrencia vuelva a notificar."
+    )
+    action_left, action_right = st.columns([1, 2])
+    if action_left.button(
+        "Evaluar ahora",
+        use_container_width=True,
+        help="Recorre la ventana y abre/actualiza incidentes por fingerprint.",
+    ):
+        _evaluate_now()
+    with action_right:
+        _exports()
+
+    incidents = cache.incidents()
+    tables.incidents_table(incidents)
+    _manage(incidents)
+
+    st.divider()
     analysis = settings.analysis
     left, right = st.columns([2, 1])
     with left:
@@ -63,7 +212,7 @@ def render(selected: EventFilters) -> None:
         "Umbral de incidente",
         format_int(analysis.incident_threshold),
         help="Eventos del mismo fingerprint en la ventana a partir de los cuales "
-             "la Fase 5 abrirá un incidente.",
+             "se abre un incidente.",
     )
 
     st.divider()
@@ -72,7 +221,7 @@ def render(selected: EventFilters) -> None:
         if any(row["count"] >= analysis.incident_threshold for row in patterns):
             st.error(
                 "Hay fingerprints por encima del umbral de incidente "
-                f"({analysis.incident_threshold}). Candidatos a incidente abierto.",
+                f"({analysis.incident_threshold}). Pulsa «Evaluar ahora» para abrirlos.",
                 icon="🚨",
             )
         else:
