@@ -3,7 +3,7 @@ VENV   ?= .venv
 
 .DEFAULT_GOAL := help
 
-.PHONY: help install migrate migrate-status test test-verbose check-db seed demo dashboard clean reset-db fmt lint
+.PHONY: help install migrate migrate-status test test-verbose check-db seed demo dashboard clean reset-db fmt lint docker-build docker-up docker-down docker-logs
 
 help: ## Muestra esta ayuda
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -44,6 +44,18 @@ reset-db: ## Borra la base de datos (migraciones y datos)
 
 lint: ## Verifica sintaxis de todos los módulos
 	$(PYTHON) -m compileall -q app tools tests
+
+docker-build: ## Construye la imagen (Fase 6)
+	docker compose build
+
+docker-up: ## Levanta analyzer + dashboard en segundo plano
+	docker compose up -d
+
+docker-down: ## Detiene los servicios (los volúmenes de data/exports persisten)
+	docker compose down
+
+docker-logs: ## Sigue los logs de ambos servicios
+	docker compose logs -f
 
 clean: ## Elimina cachés
 	find . -type d -name __pycache__ -not -path './.git/*' -exec rm -rf {} + 2>/dev/null || true

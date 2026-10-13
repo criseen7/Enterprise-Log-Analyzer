@@ -116,7 +116,7 @@ app/
     __main__.py                 CLI: python -m app.analysis
     alerts.py                   (Fase 5)
   ui/
-    app.py  pages/  components/  theme.py
+    app.py  views/  components/  theme.py
   reports/
 tools/generate_sample_logs.py   datos sintéticos para el demo
 tests/
@@ -374,13 +374,26 @@ export **CSV** y **HTML** autocontenido · estados OPEN/ACK/RESOLVED
 
 ---
 
-### Fase 6 — Docker *(post-MVP)*
+### Fase 6 — Docker ✅ *implementada 2026-10-13*
 
-Multi-stage · `python:3.12-slim` pinneado · usuario no-root · `.dockerignore` ·
-compose con **volúmenes** para `logs:ro`, `data`, `exports` · servicios `analyzer` y
-`dashboard` separados · healthchecks.
+`Dockerfile` multi-stage (`python:3.12-slim` pinneado) · usuario no-root (uid 10001)
+· `.dockerignore` · `docker-compose.yml` con servicios `analyzer` (watcher, único
+escritor) y `dashboard` separados · **volúmenes** `logs:ro`, `ela-data`,
+`ela-exports` · healthchecks (base de datos en `analyzer`, `/_stcore/health` en
+`dashboard`) · `dashboard` arranca sólo cuando `analyzer` está sano, para serializar
+la migración inicial.
 
-**Aceptación:** `docker compose up` desde repo limpio; `data/app.db` sobrevive a `down` + `build`.
+**Aceptación:**
+- [x] Multi-stage, imagen base pinneada y usuario no-root
+- [x] `.dockerignore` excluye `.git`, `.venv`, datos, logs, tests y docs
+- [x] Servicios separados con volúmenes `logs:ro` / `data` / `exports`
+- [x] Healthchecks en ambos servicios
+- [ ] `docker compose up` desde repo limpio · `data/app.db` sobrevive a `down` + `build`
+      — *pendiente de ejecutar donde haya Docker: el entorno de desarrollo no tenía
+      integración WSL 2. Verificar con `make docker-up`.*
+
+Los volúmenes `ela-data` / `ela-exports` son **named volumes**: `docker compose down`
+no los borra (sólo `down -v`), por eso la base sobrevive a un rebuild.
 
 ---
 

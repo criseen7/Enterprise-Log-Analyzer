@@ -28,6 +28,7 @@ agent would likely get wrong without help.
 | Analysis | `python -m app.analysis [--top N --hourly --anomalies --patterns --backfill]` |
 | Alerts CLI | `python -m app.alerts [--list --status OPEN --export csv --window 60 --no-evaluate]` |
 | Dashboard | `streamlit run app/ui/app.py` |
+| Docker up/down | `make docker-up` · `make docker-down` (analyzer + dashboard) |
 
 Always run the suite with `.venv/bin/python`; `pytest` also works but the
 dashboard smoke tests are skipped without Streamlit.
@@ -36,6 +37,11 @@ dashboard smoke tests are skipped without Streamlit.
 
 - Entrypoints: `app/ui/app.py` (dashboard), `app/ingest/`, `app/analysis/`,
   `app/alerts/` (each has a `__main__.py` CLI).
+- **Docker (Fase 6):** two services — `analyzer` (`python -m app.ingest --watch`,
+  sole writer) and `dashboard` (`streamlit run app/ui/app.py`). `logs` is a
+  read-only bind mount; `ela-data`/`ela-exports` are named volumes (survive
+  `down`/`build`). `dashboard` `depends_on: service_healthy` so only one process
+  applies the schema baseline. Paths come from `ELA_*` env (`/data/app.db`, etc.).
 - **Ingest identity is `(inode, generation)`, not path** (`app/db/repository.py`).
   `UNIQUE(path)` breaks on `copytruncate`/rotation (ADR-003).
 - **Ingest order matters:** resolve → read → insert → then advance `last_offset`.
@@ -78,8 +84,10 @@ dashboard smoke tests are skipped without Streamlit.
 ## Conventions
 
 - Trust executable sources over prose when they conflict.
-- `app/ui/data.py` pure; `app/ui/pages/*` render-only; `app/ui/components/*`
-  reusable UI; `app/ui/cache.py` wraps Streamlit cache; `app/db/*` schema/migrations.
+- `app/ui/data.py` pure; `app/ui/views/*` render-only (named `views/`, not
+  `pages/`, to avoid Streamlit's auto-multipage warning with `st.navigation`);
+  `app/ui/components/*` reusable UI; `app/ui/cache.py` wraps Streamlit cache;
+  `app/db/*` schema/migrations.
 - Writes in the dashboard are the exception and are explicit (Incidents, Settings):
   open a writable `connection()`, mutate, `cache.clear_caches()`, `st.rerun()`.
 - Do not add comments or create docs unless asked.
