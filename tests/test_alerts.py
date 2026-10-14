@@ -55,6 +55,54 @@ class AlertsTests(UiDataTestCase):
         count = self.conn.execute("SELECT COUNT(*) FROM incidents").fetchone()[0]
         self.assertEqual(count, 25)
 
+    def test_incidente_resuelto_se_reabre_al_recurrir(self):
+        """Un rebrote sobre un incidente RESOLVED lo reabre y reinicia el cooldown."""
+        for i in range(60):
+            self._insert(i, "fp-reabre", f"2026-10-05T12:{i:02d}:00Z")
+        self.conn.commit()
+        evaluate_incidents(self.conn, window_minutes=120, min_count=50)
+        inc_id = int(
+            self.conn.execute(
+                "SELECT id FROM incidents WHERE fingerprint = 'fp-reabre'"
+            ).fetchone()[0]
+        )
+        self.assertTrue(set_incident_status(self.conn, inc_id, "RESOLVED"))
+        self.assertEqual(get_incident(self.conn, inc_id)["status"], "RESOLVED")
+
+        evaluate_incidents(self.conn, window_minutes=120, min_count=50)
+        row = get_incident(self.conn, inc_id)
+        self.assertEqual(row["status"], "OPEN", "el rebrote debe reabrir el incidente")
+        self.assertIsNone(row["notified_at"], "la reapertura reinicia el cooldown")
+
+    def test_event_count_refleja_la_ventana_no_un_maximo(self):
+        """`event_count` es el conteo de la ventana vigente, puede bajar."""
+        for i in range(60):
+            self._insert(i, "fp-window", f"2026-10-05T12:{i:02d}:00Z")
+        self.conn.commit()
+        evaluate_incidents(self.conn, window_minutes=120, min_count=50)
+        inc_id = int(
+            self.conn.execute(
+                "SELECT id FROM incidents WHERE fingerprint = 'fp-window'"
+            ).fetchone()[0]
+        )
+        self.assertEqual(get_incident(self.conn, inc_id)["event_count"], 60)
+
+        # Ventana de 1 min: solo entran 12:58 y 12:59.
+        evaluate_incidents(self.conn, window_minutes=1, min_count=2)
+        self.assertEqual(get_incident(self.conn, inc_id)["event_count"], 2)
+
+    def test_evaluar_dos_veces_no_duplica_ni_falla(self):
+        """El upsert es atómico: reevaluar no lanza IntegrityError ni duplica filas."""
+        for i in range(60):
+            self._insert(i, "fp-idem", f"2026-10-05T12:{i:02d}:00Z")
+        self.conn.commit()
+        evaluate_incidents(self.conn, window_minutes=120, min_count=50)
+        evaluate_incidents(self.conn, window_minutes=120, min_count=50)
+        count = self.conn.execute(
+            "SELECT COUNT(*) FROM incidents WHERE fingerprint = 'fp-idem'"
+        ).fetchone()[0]
+        self.assertEqual(count, 1)
+
     def test_no_incident_below_threshold(self):
         for i in range(49):
             self._insert(i, "fp-low", f"2026-10-05T12:{i:02d}:00Z")
