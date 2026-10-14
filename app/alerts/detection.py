@@ -12,6 +12,7 @@ from datetime import datetime, timedelta, timezone
 
 from app.analysis.patterns import RecurringPattern, recurring_patterns
 from app.config import AnalysisConfig, get_settings
+from app.db.connection import transaction
 from app.parser.normalization import to_utc_iso
 
 
@@ -80,7 +81,39 @@ def _should_notify(now: datetime, notified_at: str | None, cooldown_minutes: int
 
 
 def _upsert_incident(conn: sqlite3.Connection, c: IncidentCandidate, now: datetime, cooldown_minutes: int) -> dict:
-    # get existing
+    """Crea o actualiza un incidente por fingerprint.
+
+    Reapertura automática: si el incidente estaba `RESOLVED` y vuelve a
+    detectarse recurrencia, pasa a `OPEN` y reinicia `notified_at` (cooldown).
+    `event_count` refleja el conteo de la ventana, no un máximo acumulado.
+    """
+    notify_on_insert = _should_notify(now, None, cooldown_minutes)
+    cursor = conn.execute(
+        """
+        INSERT OR IGNORE INTO incidents (
+            fingerprint, category, severity, sample_message,
+            first_seen, last_seen, event_count, status, notified_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'OPEN', ?)
+        """,
+        (
+            c.fingerprint,
+            c.category,
+            c.severity,
+            c.sample_message,
+            c.first_seen,
+            c.last_seen,
+            c.event_count,
+            _format_iso(now) if notify_on_insert else None,
+        ),
+    )
+    if cursor.rowcount == 1:
+        return {
+            "id": cursor.lastrowid,
+            "fingerprint": c.fingerprint,
+            "status": "OPEN",
+            "notified": notify_on_insert,
+        }
+
     row = conn.execute(
         """
         SELECT id, status, notified_at, event_count, first_seen, last_seen
@@ -90,84 +123,59 @@ def _upsert_incident(conn: sqlite3.Connection, c: IncidentCandidate, now: dateti
         (c.fingerprint,),
     ).fetchone()
     if row is None:
-        notify = _should_notify(now, None, cooldown_minutes)
-        conn.execute(
-            """
-            INSERT INTO incidents (
-                fingerprint, category, severity, sample_message,
-                first_seen, last_seen, event_count, status, notified_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, 'OPEN', ?)
-            """,
-            (
-                c.fingerprint,
-                c.category,
-                c.severity,
-                c.sample_message,
-                c.first_seen,
-                c.last_seen,
-                c.event_count,
-                _format_iso(now) if notify else None,
-            ),
+        raise RuntimeError(
+            f"incidente no insertado ni encontrado: {c.fingerprint!r}"
         )
-        inc_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
-        return {
-            "id": inc_id,
-            "fingerprint": c.fingerprint,
-            "status": "OPEN",
-            "notified": notify,
-        }
+
+    inc_id, status_cur, notified_at_cur = row["id"], row["status"], row["notified_at"]
+    new_status = status_cur
+    new_notified_at = notified_at_cur
+    notify = False
+
+    if status_cur == "RESOLVED":
+        new_status = "OPEN"
+        new_notified_at = None
     else:
-        inc_id, status, notified_at_cur, event_count_cur, first_seen_cur, last_seen_cur = row
-        # update counts/timestamps, keep status unless explicitly managed
         notify = _should_notify(now, notified_at_cur, cooldown_minutes)
-        new_notified = notified_at_cur
         if notify:
-            new_notified = _format_iso(now)
-        conn.execute(
-            """
-            UPDATE incidents
-            SET category = ?,
-                severity = ?,
-                sample_message = ?,
-                first_seen = CASE WHEN ? < first_seen THEN ? ELSE first_seen END,
-                last_seen = CASE WHEN ? > last_seen THEN ? ELSE last_seen END,
-                event_count = MAX(event_count, ?),
-                notified_at = ?
-            WHERE id = ?
-            """,
-            (
-                c.category,
-                c.severity,
-                c.sample_message,
-                c.first_seen,
-                c.first_seen,
-                c.last_seen,
-                c.last_seen,
-                c.event_count,
-                new_notified,
-                inc_id,
-            ),
-        )
-        # restore first_seen/last_seen precisely per candidate boundaries? simpler: use candidate if extends
-        conn.execute(
-            "UPDATE incidents SET last_seen = ? WHERE id = ? AND ? > last_seen",
-            (c.last_seen, inc_id, c.last_seen),
-        )
-        conn.execute(
-            "UPDATE incidents SET first_seen = ? WHERE id = ? AND ? < first_seen",
-            (c.first_seen, inc_id, c.first_seen),
-        )
-        # event_count: candidate count is total in window? store max or sum? better reflect event_count seen; but spec says "upsert of incident" - keep max or set to candidate
-        conn.execute(
-            "UPDATE incidents SET event_count = ? WHERE id = ? AND ? > event_count",
-            (c.event_count, inc_id, c.event_count),
-        )
-        return {
-            "id": inc_id,
-            "fingerprint": c.fingerprint,
-            "status": status,
-            "notified": notify,
-        }
+            new_notified_at = _format_iso(now)
+        else:
+            new_notified_at = notified_at_cur
+
+    conn.execute(
+        """
+        UPDATE incidents
+        SET category = ?,
+            severity = ?,
+            sample_message = ?,
+            first_seen = CASE WHEN ? < first_seen THEN ? ELSE first_seen END,
+            last_seen = CASE WHEN ? > last_seen THEN ? ELSE last_seen END,
+            event_count = ?,
+            status = ?,
+            notified_at = ?
+        WHERE id = ?
+        """,
+        (
+            c.category,
+            c.severity,
+            c.sample_message,
+            c.first_seen,
+            c.first_seen,
+            c.last_seen,
+            c.last_seen,
+            c.event_count,
+            new_status,
+            new_notified_at,
+            inc_id,
+        ),
+    )
+
+    return {
+        "id": inc_id,
+        "fingerprint": c.fingerprint,
+        "status": new_status,
+        "notified": notify,
+    }
 
 
 def evaluate_incidents(
@@ -211,9 +219,10 @@ def evaluate_incidents(
 
     now = datetime.now(timezone.utc)
     results = []
-    for c in candidates:
-        res = _upsert_incident(conn, c, now, cfg.cooldown_minutes)
-        results.append(res)
+    with transaction(conn):
+        for c in candidates:
+            res = _upsert_incident(conn, c, now, cfg.cooldown_minutes)
+            results.append(res)
 
     return {
         "evaluated": len(candidates),
