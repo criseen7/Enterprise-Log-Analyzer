@@ -344,6 +344,34 @@ class PatternsTest(AnalysisDbTest):
         with self.assertRaises(ValueError):
             recurring_patterns(self.conn, window_minutes=0)
 
+    def _seed_many_fingerprints(self, n: int, occurrences: int = 2) -> None:
+        file_id = self.seed_file()
+        for i in range(n):
+            for j in range(occurrences):
+                self.add_event(
+                    file_id,
+                    f"2026-10-05T10:0{j}:00.000Z",
+                    fingerprint=f"fp-{i:03d}",
+                    message="timeout de consulta",
+                    category="timeout",
+                )
+
+    def test_sin_tope_devuelve_todas_las_huellas(self):
+        """El default no puede recortar: 25 huellas sobre el umbral son 25 filas."""
+        self._seed_many_fingerprints(25)
+        filas = recurring_patterns(
+            self.conn, window_minutes=15, min_count=2, min_severity=ERROR
+        )
+        self.assertEqual(len(filas), 25)
+
+    def test_limit_explicito_si_recorta(self):
+        """El tope es una decisión de quien llama, no un efecto colateral oculto."""
+        self._seed_many_fingerprints(25)
+        filas = recurring_patterns(
+            self.conn, window_minutes=15, min_count=2, min_severity=ERROR, limit=5
+        )
+        self.assertEqual(len(filas), 5)
+
 
 class AnomaliesTest(AnalysisDbTest):
     def seed_series(self, counts: list[int], *, start: str = "2026-10-05") -> None:

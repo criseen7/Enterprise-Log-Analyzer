@@ -43,6 +43,18 @@ class AlertsTests(UiDataTestCase):
         count = self.conn.execute("SELECT COUNT(*) FROM incidents").fetchone()[0]
         self.assertEqual(count, 1)
 
+    def test_abre_un_incidente_por_cada_huella_sobre_el_umbral(self):
+        """Sin tope implícito: 25 huellas sobre el umbral son 25 incidentes."""
+        for fp in range(25):
+            for j in range(2):
+                self._insert(fp * 2 + j, f"fp-{fp:03d}", f"2026-10-05T12:00:0{j}.000Z")
+        self.conn.commit()
+
+        result = evaluate_incidents(self.conn, window_minutes=120, min_count=2)
+        self.assertEqual(result["evaluated"], 25)
+        count = self.conn.execute("SELECT COUNT(*) FROM incidents").fetchone()[0]
+        self.assertEqual(count, 25)
+
     def test_no_incident_below_threshold(self):
         for i in range(49):
             self._insert(i, "fp-low", f"2026-10-05T12:{i:02d}:00Z")

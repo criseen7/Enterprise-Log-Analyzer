@@ -230,6 +230,36 @@ class DashboardSmokeTests(unittest.TestCase):
         labels = [b.label for b in at.button]
         self.assertIn("Evaluar ahora", labels)
 
+    def test_incidents_cuenta_mas_de_veinte_fingerprints(self):
+        """El contador de la UI no puede quedarse en 20: cuenta la ventana entera."""
+        from streamlit.testing.v1 import AppTest
+        from app.db.connection import connection
+        from app.db.migrations import migrate
+
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        migrate(self.db_path)
+
+        with connection() as conn:
+            conn.execute(
+                "INSERT INTO log_files (path, first_seen, last_seen) VALUES (?, ?, ?)",
+                ("logs/app.log", "2026-10-05T12:00:00.000Z", "2026-10-05T12:00:00.000Z"),
+            )
+            for fp in range(25):
+                for j in range(6):
+                    conn.execute(
+                        "INSERT INTO events (file_id, offset, fingerprint, category, "
+                        "timestamp_utc, severity, message, raw_line, parsed_ok) "
+                        "VALUES (1, ?, ?, 'network', ?, 50, 'timeout', 'timeout', 1)",
+                        (fp * 6 + j, f"fp-{fp:03d}", f"2026-10-05T12:00:0{j}.000Z"),
+                    )
+            conn.commit()
+
+        at = AppTest.from_string(_page_script("incidents"), default_timeout=30)
+        at.run()
+        self.assert_no_exception(at)
+        values = [m.value for m in at.metric]
+        self.assertIn("25", values, values)
+
     def test_incidents_banner_avisa_de_abiertos(self):
         from streamlit.testing.v1 import AppTest
 
