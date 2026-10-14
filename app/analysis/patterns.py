@@ -66,12 +66,17 @@ def recurring_patterns(
     now: str | None = None,
     min_count: int = 2,
     min_severity: int = UNKNOWN,
-    limit: int = 20,
+    limit: int | None = None,
 ) -> list[RecurringPattern]:
     """Patrones que se repiten dentro de la ventana `(now - window, now]`.
 
     `share` es el peso del patrón dentro de la ventana: sin él, "5 ocurrencias"
     no dice nada si la ventana tiene 5 eventos o 5.000.
+
+    `limit=None` (por defecto) devuelve **todas** las huellas de la ventana. Un
+    tope implícito es un recorte silencioso: quien abre incidentes o cuenta
+    fingerprints necesita la lista completa. Recortar para presentar es
+    responsabilidad de la UI/CLI, y el orden `n DESC, last_seen DESC` lo permite.
     """
     if window_minutes <= 0:
         raise ValueError("window_minutes debe ser > 0")
@@ -89,8 +94,7 @@ def recurring_patterns(
     ).fetchone()
     total = int(total_row[0]) if total_row else 0
 
-    rows = conn.execute(
-        """
+    sql = """
         SELECT fingerprint,
                MAX(category)     AS category,
                MAX(message)      AS sample_message,
@@ -107,10 +111,12 @@ def recurring_patterns(
         GROUP BY fingerprint
         HAVING COUNT(*) >= ?
         ORDER BY n DESC, last_seen DESC
-        LIMIT ?
-        """,
-        (lower, upper, min_severity, min_count, limit),
-    ).fetchall()
+    """
+    params: list[object] = [lower, upper, min_severity, min_count]
+    if limit is not None:
+        sql += " LIMIT ?"
+        params.append(limit)
+    rows = conn.execute(sql, params).fetchall()
 
     return [
         RecurringPattern(

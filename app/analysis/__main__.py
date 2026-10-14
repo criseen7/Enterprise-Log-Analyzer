@@ -102,15 +102,22 @@ def _print_anomalies(conn, config) -> None:
 
 
 def _print_patterns(conn, config, window: int) -> None:
-    found = recurring_patterns(conn, window_minutes=window, min_count=2, min_severity=40)
+    limit = 20
+    # Sin tope en la consulta y recorte aquí: así el aviso dice cuántos hay en
+    # total, en vez de esconder las huellas que no caben.
+    found = recurring_patterns(
+        conn, window_minutes=window, min_count=2, min_severity=40, limit=None
+    )
     if not found:
         print(f"sin recurrencias en los últimos {window} minutos")
         return
-    for item in found:
+    for item in found[:limit]:
         print(
             f"{item.count:>5}  {item.share:>5.1%}  {item.category or '-':<18} "
             f"{(item.sample_message or '').replace(chr(10), ' ')[:60]}"
         )
+    if len(found) > limit:
+        print(f"… y {len(found) - limit} fingerprints más")
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -29,6 +29,10 @@ from app.ui.components import charts, filters, kpis, tables
 from app.ui.data import EventFilters
 from app.ui.theme import format_int, shorten
 
+# Cuántas filas de recurrencia se muestran. El conteo y el aviso de umbral usan
+# la lista completa: recortar aquí es solo presentación.
+DISPLAY_LIMIT = 50
+
 
 def _banner(counts: dict[str, int]) -> None:
     """Banner de estado. Es lo primero que se ve y lo que decide si hay que actuar."""
@@ -202,7 +206,7 @@ def render(selected: EventFilters) -> None:
         )
 
     patterns = cache.recurrence(window_minutes=window, min_count=min_count,
-                                min_severity=selected.min_severity)
+                                min_severity=selected.min_severity, limit=None)
     total_in_window = sum(row["count"] for row in patterns)
 
     columns = st.columns(3)
@@ -228,7 +232,11 @@ def render(selected: EventFilters) -> None:
             st.success(
                 "Ningún fingerprint supera todavía el umbral de incidente.", icon="✅"
             )
-        tables.ranking_table(patterns, kind="categoría")
+        tables.ranking_table(patterns[:DISPLAY_LIMIT], kind="categoría")
+        if len(patterns) > DISPLAY_LIMIT:
+            st.caption(
+                f"Mostrando {DISPLAY_LIMIT} de {format_int(len(patterns))} fingerprints."
+            )
         st.caption(
             "La columna `n` es el número de ocurrencias del mismo fingerprint "
             "(categoría + mensaje normalizado) dentro de la ventana."

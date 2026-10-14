@@ -145,11 +145,19 @@ def spikes(
 
 
 @st.cache_data(ttl=_TTL, show_spinner=False)
-def recurrence(window_minutes: int = 15, min_count: int = 2, min_severity: int = 45) -> list[dict]:
+def recurrence(
+    window_minutes: int = 15,
+    min_count: int = 2,
+    min_severity: int = 45,
+    limit: int | None = None,
+) -> list[dict]:
     """Recurrencia en la ventana. `now` no se pasa: la ventana acaba en el último
-    evento del dataset, que es lo que hace que un dataset histórico muestre algo."""
+    evento del dataset, que es lo que hace que un dataset histórico muestre algo.
+
+    `limit=None` trae todas las huellas: los contadores de la vista no pueden
+    calcularse sobre una lista recortada."""
     with connection(read_only=True) as conn:
-        return [row.__dict__ for row in recurring_patterns(conn, window_minutes=window_minutes, min_count=min_count, min_severity=min_severity)]
+        return [row.__dict__ for row in recurring_patterns(conn, window_minutes=window_minutes, min_count=min_count, min_severity=min_severity, limit=limit)]
 
 
 @st.cache_data(ttl=_TTL, show_spinner=False)

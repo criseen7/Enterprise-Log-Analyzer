@@ -191,8 +191,10 @@ def evaluate_incidents(
     sev_min = min_severity or cfg.min_incident_severity
 
     # get patterns
+    # `limit=None`: cada huella sobre el umbral debe generar incidente. Un tope
+    # aquí abriría solo los N primeros sin que nada lo advierta.
     patterns = recurring_patterns(
-        conn, window_minutes=win, min_count=thr, min_severity=sev_min
+        conn, window_minutes=win, min_count=thr, min_severity=sev_min, limit=None
     )
     candidates = _candidates_from_patterns(
         patterns,
