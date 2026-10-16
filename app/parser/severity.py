@@ -130,7 +130,3 @@ def severity_name(value: int | None) -> str:
     if value is None:
         return "UNKNOWN"
     return SEVERITY_NAMES.get(value, "UNKNOWN")
-
-
-def is_error_severity(value: int | None) -> bool:
-    return (value or UNKNOWN) >= ERROR

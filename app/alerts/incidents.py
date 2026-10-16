@@ -14,9 +14,6 @@ el mismo estado.
 from __future__ import annotations
 
 import sqlite3
-from datetime import UTC, datetime
-
-from app.parser.normalization import to_utc_iso
 
 VALID_STATUSES = ("OPEN", "ACKNOWLEDGED", "RESOLVED")
 
@@ -43,10 +40,6 @@ INCIDENT_COLUMNS = (
 
 def status_label(status: str) -> str:
     return _STATUS_LABELS.get(status, status)
-
-
-def _utcnow_iso() -> str:
-    return to_utc_iso(datetime.now(UTC))
 
 
 def list_incidents(
@@ -134,20 +127,12 @@ def set_incident_status_by_fingerprint(
     return set_incident_status(conn, int(row["id"]), status)
 
 
-def mark_notified(conn: sqlite3.Connection, incident_id: int, when: str | None = None) -> None:
-    conn.execute(
-        "UPDATE incidents SET notified_at = ? WHERE id = ?",
-        (when or _utcnow_iso(), incident_id),
-    )
-
-
 __all__ = [
     "INCIDENT_COLUMNS",
     "VALID_STATUSES",
     "get_incident",
     "incident_counts",
     "list_incidents",
-    "mark_notified",
     "set_incident_status",
     "set_incident_status_by_fingerprint",
     "status_label",

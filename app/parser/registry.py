@@ -2,7 +2,7 @@
 
 Dos tipos de patrón, porque las fuentes de logs reales caen en dos categorías:
 
-* `kind: regex` — logs oriented a línea (Apache, IIS, WebLogic). El regex
+* `kind: regex` — logs orientados a línea (Apache, WebLogic). El regex
   **debe** definir el grupo con nombre `ts`; `level`, `service`, `logger`,
   `status` y `message` son opcionales. Es un contrato explícito: si el YAML
   olvida `ts`, `load_patterns` falla al arrancar, no a mitad de la ingesta.

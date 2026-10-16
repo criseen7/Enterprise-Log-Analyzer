@@ -19,7 +19,7 @@ Detalles que importan y no son evidentes:
 * `journal_mode=WAL` falla si se ejecuta dentro de una transacción abierta.
 * Para "solo lectura" se usa `PRAGMA query_only=ON` y **no** `mode=ro` de URI:
   una conexión `mode=ro` sobre una DB en WAL necesita escribir en el archivo
-  `-shm`, así que falla incluso sin intendir escribir.
+  `-shm`, así que falla incluso sin intentar escribir.
 """
 
 from __future__ import annotations
@@ -39,7 +39,7 @@ class DatabaseError(Exception):
 
 
 def _quote(value: str) -> str:
-    """Valida un valor destined a un PRAGMA.
+    """Valida un valor destinado a un PRAGMA.
 
     SQLite no permite bind parameters en PRAGMA. En vez de interpolar a ciegas
     se restringe el alfabeto: solo tiene sentido para un puñado de keywords.

@@ -64,7 +64,6 @@ class DatabaseConfig:
     journal_mode: str = field(default="wal", metadata={"env": "ELA_JOURNAL_MODE"})
     busy_timeout_ms: int = field(default=5000, metadata={"env": "ELA_BUSY_TIMEOUT_MS"})
     synchronous: str = field(default="NORMAL", metadata={"env": "ELA_SYNCHRONOUS"})
-    max_size_gb: int = field(default=4, metadata={"env": "ELA_MAX_SIZE_GB"})
 
 
 @dataclass(frozen=True)

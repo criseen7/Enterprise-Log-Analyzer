@@ -22,7 +22,6 @@ from app.parser.severity import (
     TRACE,
     UNKNOWN,
     WARN,
-    severity_name,
 )
 
 # Paleta por severidad. El rojo de verdad se reserva para FATAL: si ERROR y
@@ -56,14 +55,6 @@ _CSS = """
 """
 
 
-def severity_color(value: int | None) -> str:
-    return SEVERITY_COLORS[severity_name(value)]
-
-
-def severity_label(value: int | None) -> str:
-    return severity_name(value)
-
-
 def apply_theme() -> None:
     st.markdown(_CSS, unsafe_allow_html=True)
 
@@ -73,14 +64,6 @@ def format_int(value: int | None) -> str:
     if value is None:
         return "-"
     return f"{value:,}".replace(",", ".")
-
-
-def format_share(value: float | None) -> str:
-    return "-" if value is None else f"{value:.1%}"
-
-
-def format_coverage(parsed: int, total: int) -> str:
-    return "-" if not total else f"{parsed / total:.1%}"
 
 
 def shorten(text: str | None, limit: int = 90) -> str:
