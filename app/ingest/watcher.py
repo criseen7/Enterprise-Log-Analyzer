@@ -22,7 +22,6 @@ duplicado.
 
 from __future__ import annotations
 
-import fnmatch
 import time
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
@@ -136,13 +135,15 @@ def _watch_with_watchdog(config, conn, registry, on_cycle, rules) -> int:  # noq
             if getattr(event, "is_directory", False):
                 return
 
-            log_dir = config.paths.log_dir.resolve()
-            allowed_names = set()
-            for pattern in config.ingest.include_patterns:
-                try:
-                    allowed_names.update(p.name for p in log_dir.glob(pattern) if p.is_file())
-                except Exception:
-                    pass
+            # La fuente de verdad es `discover()`/`Settings.log_files`: mismo
+            # glob, `is_file()` y resolución. Validar por nombre base divergía de
+            # esa lógica con patrones que llevan directorio (p. ej. `arch/*.log`)
+            # o con enlaces simbólicos, y el watcher ingería archivos que el
+            # polling no veía (y viceversa).
+            try:
+                conocidos = set(config.log_files)
+            except Exception:
+                return
 
             def _valid(raw: str | None) -> Path | None:
                 if not raw:
@@ -151,21 +152,7 @@ def _watch_with_watchdog(config, conn, registry, on_cycle, rules) -> int:  # noq
                     p = Path(raw).resolve()
                 except Exception:
                     return None
-                try:
-                    if not p.is_relative_to(log_dir):
-                        return None
-                except AttributeError:
-                    try:
-                        p.relative_to(log_dir)
-                    except Exception:
-                        return None
-                if p.name not in allowed_names:
-                    try:
-                        if not any(fnmatch.fnmatchcase(p.name, pat) for pat in config.ingest.include_patterns):
-                            return None
-                    except Exception:
-                        pass
-                return p
+                return p if p in conocidos else None
 
             src = _valid(getattr(event, "src_path", None))
             dest = _valid(getattr(event, "dest_path", None))
