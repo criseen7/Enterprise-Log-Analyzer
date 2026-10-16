@@ -113,6 +113,36 @@ class TimestampTests(unittest.TestCase):
         moment, _ = parse_timestamp("2026-10-05T14:03:22.481Z", (ISO8601,))
         self.assertEqual(to_utc_iso(moment), "2026-10-05T14:03:22.481Z")
 
+    def test_naive_datetime_is_treated_as_utc(self):
+        """Un naive no debe interpretarse en la zona local del proceso.
+
+        `astimezone()` sobre un datetime sin zona usa la hora local del sistema:
+        en un contenedor con otra zona eso produce un desfase silencioso. Se fija
+        `TZ` a una zona no-UTC para que el test sea determinista.
+        """
+        import os
+        import time as _time
+        from datetime import datetime
+
+        naive = datetime(2026, 10, 5, 14, 3, 22)
+        expected = "2026-10-05T14:03:22.000Z"
+
+        if not hasattr(_time, "tzset"):  # pragma: no cover - no aplica en Linux
+            self.assertEqual(to_utc_iso(naive), expected)
+            return
+
+        saved = os.environ.get("TZ")
+        try:
+            os.environ["TZ"] = "America/Mexico_City"
+            _time.tzset()
+            self.assertEqual(to_utc_iso(naive), expected)
+        finally:
+            if saved is None:
+                os.environ.pop("TZ", None)
+            else:
+                os.environ["TZ"] = saved
+            _time.tzset()
+
     def test_unparseable_raises(self):
         with self.assertRaises(TimestampError):
             parse_timestamp("no es una fecha", (ISO8601,))

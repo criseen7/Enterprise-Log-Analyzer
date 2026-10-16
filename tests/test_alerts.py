@@ -1,5 +1,8 @@
+import io
 import unittest
+from contextlib import redirect_stdout
 
+from tests.helpers import EnvSandbox
 from tests.test_ui_data import UiDataTestCase
 from app.alerts import evaluate_incidents
 from app.alerts.incidents import (
@@ -113,6 +116,38 @@ class AlertsTests(UiDataTestCase):
             self.conn.execute("SELECT COUNT(*) FROM incidents").fetchone()[0], 0
         )
 
+    def test_override_min_count_cero_se_respeta(self):
+        """`min_count=0` no debe caer al umbral de config (bug M16 del `or`)."""
+        self._insert(0, "fp-uno", "2026-10-05T12:00:00.000Z")
+        self.conn.commit()
+        self.assertEqual(
+            evaluate_incidents(self.conn, window_minutes=120)["evaluated"],
+            0,
+            "con el umbral por defecto (50) un único evento no abre incidente",
+        )
+        self.assertEqual(
+            evaluate_incidents(self.conn, window_minutes=120, min_count=0)["evaluated"],
+            1,
+            "min_count=0 debe aceptar un conteo de 1",
+        )
+
+    def test_override_min_severity_cero_se_respeta(self):
+        """`min_severity=0` no debe caer a la severidad mínima de config."""
+        self._insert(0, "fp-lowsev", "2026-10-05T12:00:00.000Z", severity=10)
+        self.conn.commit()
+        self.assertEqual(
+            evaluate_incidents(self.conn, window_minutes=120, min_count=1)["evaluated"],
+            0,
+            "severidad 10 < 40 por defecto: no es candidato",
+        )
+        self.assertEqual(
+            evaluate_incidents(
+                self.conn, window_minutes=120, min_count=1, min_severity=0
+            )["evaluated"],
+            1,
+            "min_severity=0 debe incluir la severidad 10",
+        )
+
     def test_csv_has_utf8_sig_bom(self):
         for i in range(60):
             self._insert(i, "fp-csv", f"2026-10-05T12:{i:02d}:00Z")
@@ -122,6 +157,32 @@ class AlertsTests(UiDataTestCase):
         csv_bytes = export_incidents_csv(self.conn)
         self.assertTrue(csv_bytes.startswith(b"\xef\xbb\xbf"))
         self.assertTrue(csv_bytes.decode("utf-8-sig").startswith("id,fingerprint"))
+
+    def test_cli_export_obedece_el_filtro_status(self):
+        """`--status RESOLVED --export csv` no debe volcar los incidentes OPEN."""
+        from app.alerts.__main__ import main
+
+        for i in range(60):
+            self._insert(i, "fp-open", f"2026-10-05T12:{i:02d}:00Z")
+        for i in range(60):
+            self._insert(100 + i, "fp-resuelto", f"2026-10-05T12:{i:02d}:00Z")
+        self.conn.commit()
+        evaluate_incidents(self.conn, window_minutes=120, min_count=50)
+        resolved_id = int(
+            self.conn.execute(
+                "SELECT id FROM incidents WHERE fingerprint = 'fp-resuelto'"
+            ).fetchone()[0]
+        )
+        set_incident_status(self.conn, resolved_id, "RESOLVED")
+
+        buf = io.StringIO()
+        with EnvSandbox(ELA_DB_PATH=str(self.db_path)), redirect_stdout(buf):
+            rc = main(["--no-evaluate", "--status", "RESOLVED", "--export", "csv"])
+
+        self.assertEqual(rc, 0)
+        out = buf.getvalue()
+        self.assertIn("fp-resuelto", out)
+        self.assertNotIn("fp-open", out, "el export ignoró --status")
 
     def test_html_is_autocontained(self):
         for i in range(60):

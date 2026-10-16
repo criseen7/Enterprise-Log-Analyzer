@@ -305,6 +305,41 @@ class MigrationTests(TempDbTestCase):
             "no debe quedar la tabla transitoria tras una migración correcta",
         )
 
+    def test_wedged_v3_partial_application_recovers(self):
+        """`_003` (ADD COLUMN) no es re-ejecutable: aplicar de nuevo el ALTER falla.
+
+        Si el `ALTER TABLE events ADD COLUMN category` surtió efecto pero la
+        versión no llegó a registrarse (un fallo entre el DDL y `_record`), un
+        reintento abortaría con `duplicate column name` y la base quedaría
+        atascada en v2. El guard del runner detecta la columna y salta el ALTER.
+        """
+        from app.db.migrations import _BASELINE_VERSION, _record
+
+        conn = self.connect()
+        conn.executescript((FIXTURES_DIR / "schema_v1.sql").read_text(encoding="utf-8"))
+        _record(conn, _BASELINE_VERSION)
+        conn.close()
+
+        self.assertEqual(migrate(self.db_path, target=2), [2])
+
+        conn = self.connect()
+        conn.execute("ALTER TABLE events ADD COLUMN category TEXT")
+        conn.close()
+
+        self.assertEqual(migrate(self.db_path), [3, SCHEMA_VERSION])
+        self.assertEqual(migrate(self.db_path), [], "debe ser idempotente")
+
+        conn = self.connect()
+        columnas = {r[1] for r in conn.execute("PRAGMA table_info(events)")}
+        self.assertIn("category", columnas)
+        self.assertEqual(
+            conn.execute(
+                "SELECT COUNT(*) FROM sqlite_master WHERE name='idx_events_cat_ts'"
+            ).fetchone()[0],
+            1,
+            "el guard debe reafirmar el índice de _003",
+        )
+
     def test_refuses_newer_database(self):
         migrate(self.db_path)
         with self.assertRaises(RuntimeError):
