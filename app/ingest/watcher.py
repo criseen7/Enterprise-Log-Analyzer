@@ -123,6 +123,30 @@ def run_polling(
     return cycles
 
 
+def _known_files(config) -> set[Path]:
+    """Archivos que `discover()`/`Settings.log_files` considera ingeribles.
+
+    Es la fuente de verdad para el watcher: `Settings.log_files` aplica el mismo
+    glob, el mismo `is_file()` y la misma resolución que la ingesta por polling.
+    """
+    return set(config.log_files)
+
+
+def _match_known(raw: str | None, conocidos: set[Path]) -> Path | None:
+    """Ruta resuelta si está en `conocidos`; `None` si no aplica.
+
+    Validar por nombre base divergía de `discover()` con patrones que llevan
+    directorio (p. ej. `arch/*.log`) y con enlaces simbólicos.
+    """
+    if not raw:
+        return None
+    try:
+        p = Path(raw).resolve()
+    except OSError:
+        return None
+    return p if p in conocidos else None
+
+
 def _watch_with_watchdog(config, conn, registry, on_cycle, rules) -> int:  # noqa: ANN001
     """Camino con watchdog. Devuelve solo al recibir Ctrl-C."""
     from watchdog.events import FileSystemEventHandler  # type: ignore[import-untyped]
@@ -135,27 +159,13 @@ def _watch_with_watchdog(config, conn, registry, on_cycle, rules) -> int:  # noq
             if getattr(event, "is_directory", False):
                 return
 
-            # La fuente de verdad es `discover()`/`Settings.log_files`: mismo
-            # glob, `is_file()` y resolución. Validar por nombre base divergía de
-            # esa lógica con patrones que llevan directorio (p. ej. `arch/*.log`)
-            # o con enlaces simbólicos, y el watcher ingería archivos que el
-            # polling no veía (y viceversa).
             try:
-                conocidos = set(config.log_files)
+                conocidos = _known_files(config)
             except Exception:
                 return
 
-            def _valid(raw: str | None) -> Path | None:
-                if not raw:
-                    return None
-                try:
-                    p = Path(raw).resolve()
-                except Exception:
-                    return None
-                return p if p in conocidos else None
-
-            src = _valid(getattr(event, "src_path", None))
-            dest = _valid(getattr(event, "dest_path", None))
+            src = _match_known(getattr(event, "src_path", None), conocidos)
+            dest = _match_known(getattr(event, "dest_path", None), conocidos)
             # `moved` llega como src (origen) y dest (destino): se necesitan
             # ambos, porque el rename deja la identidad en el inode y la ruta
             # vieja ya no existe.

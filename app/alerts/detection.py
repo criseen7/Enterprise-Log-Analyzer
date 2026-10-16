@@ -27,10 +27,6 @@ class IncidentCandidate:
     event_count: int
 
 
-def _utcnow_iso() -> str:
-    return to_utc_iso(datetime.now(timezone.utc))
-
-
 def _parse_iso(ts: str) -> datetime:
     # `timestamp_utc` viene como YYYY-MM-DDTHH:MM:SS[.mmm]Z. `fromisoformat`
     # entiende las dos formas; el fallback cubre cadenas sin sufijo de zona.
@@ -194,9 +190,9 @@ def evaluate_incidents(
         min_severity: override severidad mínima para candidato
     """
     cfg = get_settings().analysis
-    win = window_minutes or cfg.window_minutes
-    thr = min_count or cfg.incident_threshold
-    sev_min = min_severity or cfg.min_incident_severity
+    win = cfg.window_minutes if window_minutes is None else window_minutes
+    thr = cfg.incident_threshold if min_count is None else min_count
+    sev_min = cfg.min_incident_severity if min_severity is None else min_severity
 
     # get patterns
     # `limit=None`: cada huella sobre el umbral debe generar incidente. Un tope

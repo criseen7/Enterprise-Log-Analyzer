@@ -17,6 +17,8 @@ una sola vez, en v0, y desde ahí solo los deltas.
 
 from __future__ import annotations
 
+import sqlite3
+from collections.abc import Callable
 from pathlib import Path
 
 from app.db.connection import connect, journal_mode
@@ -39,9 +41,40 @@ _deltas: dict[int, Path] = {
 _baseline_covers = set(_deltas) | {_BASELINE_VERSION}
 
 
+def _delta_003_already_applied(conn) -> bool:
+    """True si `_003` ya surtió efecto sobre `events.category`.
+
+    `ALTER TABLE ... ADD COLUMN` no acepta `IF NOT EXISTS`. Si el ALTER se aplicó
+    pero la versión no llegó a registrarse (un fallo entre DDL y `_record`), un
+    reintento abortaría con `duplicate column name` y la base quedaría atascada
+    en v2. Cuando la columna ya existe, se reafirma el índice (idempotente) y se
+    salta el ALTER.
+    """
+    if not _column_exists(conn, "events", "category"):
+        return False
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_events_cat_ts ON events (category, timestamp_utc)"
+    )
+    return True
+
+
+# Deltas que no son re-ejecutables en SQL puro. El guard detecta si el efecto ya
+# está presente y, de ser así, sólo reafirma su parte idempotente.
+_DELTA_GUARDS: dict[int, Callable[[sqlite3.Connection], bool]] = {
+    3: _delta_003_already_applied,
+}
+
+
 def _table_exists(conn, name: str) -> bool:
     row = conn.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)
+    ).fetchone()
+    return row is not None
+
+
+def _column_exists(conn, table: str, column: str) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM pragma_table_info(?) WHERE name = ?", (table, column)
     ).fetchone()
     return row is not None
 
@@ -88,10 +121,9 @@ def _apply_script(conn, script: Path, version: int) -> None:
         raise FileNotFoundError(f"falta el script de migración: {script}")
     # No se envuelve en `transaction()` a propósito: executescript() ejecuta un
     # COMMIT implícito, así que un BEGIN/COMMIT explícito alrededor falla con
-    # "cannot commit - no transaction is active". Tampoco hace falta atomicidad:
-    # todo el DDL es `IF NOT EXISTS` o un rebuild que deja la tabla nueva antes
-    # de borrar la vieja, así que una aplicación parcial se recupera volviendo a
-    # correr el script.
+    # "cannot commit - no transaction is active". La atomicidad, si hace falta,
+    # la declara el propio script (`_002` abre su BEGIN/COMMIT). Un delta que no
+    # sea re-ejecutable en SQL puro se protege con `_DELTA_GUARDS`.
     conn.executescript(script.read_text(encoding="utf-8"))
     _record(conn, version)
 
@@ -128,6 +160,11 @@ def migrate(db_path: str | Path, *, target: int | None = None) -> list[int]:
 
         for version in sorted(_deltas):
             if version <= current or version > target:
+                continue
+            guard = _DELTA_GUARDS.get(version)
+            if guard is not None and guard(conn):
+                _record(conn, version)
+                applied.append(version)
                 continue
             _apply_script(conn, _deltas[version], version)
             applied.append(version)

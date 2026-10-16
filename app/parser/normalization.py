@@ -126,21 +126,12 @@ def to_utc_iso(value: datetime) -> str:
     Los milisegundos se emiten siempre, incluso cuando son `.000`. Omitirlos
     rompe la premisa: `'...22.481Z' < '...22Z'` porque `.` < `Z`, así que dos
     timestamps del mismo segundo se ordenarían al revés.
+
+    Un `datetime` sin zona se interpreta como UTC, no como hora local:
+    `astimezone()` sobre un naive usa la zona del sistema, que en un contenedor
+    puede no ser UTC y produciría un desfase silencioso.
     """
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=UTC)
     as_utc = value.astimezone(UTC)
     return as_utc.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
-
-
-def floor_to_bucket(value: datetime, bucket: str) -> datetime:
-    """Trunca a una granularidad: `hour` o `day`.
-
-    Se usa en las agregaciones del dashboard para no agrupar por microsegundo.
-    """
-    as_utc = value.astimezone(UTC)
-    if bucket == "hour":
-        return as_utc.replace(minute=0, second=0, microsecond=0)
-    if bucket == "day":
-        return as_utc.replace(hour=0, minute=0, second=0, microsecond=0)
-    if bucket == "minute":
-        return as_utc.replace(second=0, microsecond=0)
-    raise ValueError(f"granularidad no soportada: {bucket!r}")
