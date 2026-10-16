@@ -103,7 +103,7 @@ app/
     watcher.py                  watchdog, debounce, shutdown limpio
   parser/
     registry.py                 PatternSpec · detect() · parse()
-    patterns/{apachev2,iis,weblogic,json}.yaml
+    patterns/{apachev2,weblogic,json}.yaml
     normalization.py            ts → UTC · nivel → severity canónica
   db/
     connection.py               WAL · busy_timeout · contextmanager
@@ -114,7 +114,10 @@ app/
     fingerprint.py              normalización del mensaje · sha256
     metrics.py  patterns.py  anomalies.py  backfill.py
     __main__.py                 CLI: python -m app.analysis
-    alerts.py                   (Fase 5)
+  alerts/
+    detection.py                umbral + ventana · upsert de incidentes
+    incidents.py                estados OPEN/ACKNOWLEDGED/RESOLVED
+    __main__.py                 CLI: python -m app.alerts
   ui/
     app.py  views/  components/  theme.py
   reports/
@@ -467,9 +470,8 @@ pérdida de datos.
 
 - `docs/decisions/ADR-00N-*.md` — una por cada decisión D1–D6: contexto, opciones
   descartadas, consecuencia
-- `docs/parsing-cookbook.md` — cómo se construyó cada regex y por qué
-- `docs/pitfalls.md` — WAL, idempotencia, tz, multilínea, `cache_data`
-- **README** — diagrama Mermaid, quickstart, capturas, sección "Qué aprendí"
+- **README** — diagrama Mermaid, quickstart, stack y formatos soportados
+- **APRENDIZAJE.md** — sección "Qué aprendí"
 
 ---
 
