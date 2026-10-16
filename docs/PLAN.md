@@ -397,6 +397,61 @@ no los borra (sólo `down -v`), por eso la base sobrevive a un rebuild.
 
 ---
 
+### Fase 7 — Hardening post-auditoría ✅ *completada 2026-10-16*
+
+Una auditoría posterior a la Fase 6 encontró seis defectos (C1–C6). Los cuatro del
+camino de datos crítico ya están corregidos:
+
+| ID | Defecto | Fix |
+|---|---|---|
+| C1 | `to_utc_iso` omitía los milisegundos cuando eran `.000`, rompiendo el orden lexicográfico de TEXT | Emitir siempre `.%mmmZ` + migración `_004` que reescribe las bases existentes |
+| C2 | `Path("")` es truthy: el handler de watchdog ingería el **CWD** | `_valid()` filtra por `log_dir` y `include_patterns` |
+| C3 | `recurring_patterns` tenía un tope por defecto de 20 huellas, silencioso | `limit=None` + aviso en CLI + `DISPLAY_LIMIT` en la UI |
+| C4 | El upsert de incidentes no era atómico y no reabría los `RESOLVED` | `INSERT OR IGNORE` + `rowcount` + `transaction()` |
+
+Esta fase cierra el resto: los bugs **nuevos** que introdujeron esos fixes y los
+**pre-existentes** que la auditoría destapó.
+
+**Bugs nuevos (introducidos por los fixes de C2/C6) — ya corregidos:**
+
+| ID | Defecto | Fix |
+|---|---|---|
+| N1 | `_002` con dedup (`INSERT OR IGNORE`) dejaba huérfanos los `events.file_id` del duplicado y liberaba un `id` que SQLite reutiliza → eventos viejos atribuidos a un archivo nuevo | Numerar cada duplicado del mismo inode con una generación distinta (0,1,2…) + `BEGIN/COMMIT` para atomicidad |
+| N2 | `_valid()` del watcher validaba por nombre base + `fnmatch`, divergiendo de `discover()` con patrones con directorio (`arch/*.log`) y con symlinks | Usar `Settings.log_files` como fuente de verdad (mismo glob, `is_file`, resolución) |
+| N3 | `test_event_count_refleja_la_ventana_no_un_maximo` pasaba sólo por el defecto de orden pre-C1 (timestamps de 20 chars) | Sembrar timestamps canónicos `.000Z` y usar ventana=2 |
+
+**Bugs pre-existentes — corregidos en esta fase:**
+
+| ID | Defecto | Fix |
+|---|---|---|
+| B1 | `_003` no es idempotente: `ALTER TABLE events ADD COLUMN` no acepta `IF NOT EXISTS`; un fallo entre el ALTER y el `_record(3)` atasca la base con `duplicate column name` | `_column_exists()` + guard por versión en el runner: si el efecto ya está presente, reafirmar el índice y registrar la versión sin repetir el ALTER |
+| B2 | `evaluate_incidents` usa `or` para los overrides: `window_minutes=0`, `min_count=0` o `min_severity=0` caen silenciosamente a la config | Cambiar los tres a `is None` |
+| B3 | `_utcnow_iso` duplicado y sin uso en `detection.py` | Eliminarlo (`incidents.py` tiene el suyo y lo usa) |
+| B4 | El watcher no tenía tests; el fix N2 sólo estaba cubierto por probes manuales | Extraer la validación a funciones puras (`_known_files`, `_match_known`) + `tests/test_watcher.py` |
+| B5 | `to_utc_iso` interpreta un `datetime` naive como hora **local** vía `astimezone` | Tratar naive como UTC explícito (ningún caller pasa naive hoy) |
+
+**Fuera de alcance (Grupo C) — sin callers vivos o decisión de diseño:**
+
+- C1 `transaction()` no es reentrante (lanza `OperationalError` si se anida).
+- C2 normalizar `since`/`until` de 20 chars en `EventFilters` (retrocompat de API, sin caller vivo).
+- C3 safety cap alto en `recurring_patterns` (el fix C3 quitó el tope a propósito).
+
+**Orden de ejecución:** B4/N2 (tests del watcher) → B3 → B2 → B5 → B1 → verificación final.
+
+**Verificación:** `compileall` · `unittest discover` (≥200) · `regenerate_golden --check`
+· probes C1–C4/C6/watcher. Sin delta nuevo ni cambio de baseline → sin riesgo de
+pérdida de datos.
+
+**Aceptación — verificada:**
+- [x] B1: una base atascada en v2 con `category` creada migra a v4 sin `duplicate column name`
+- [x] B2: los overrides a 0 se respetan
+- [x] B3: `_utcnow_iso` ausente de `detection.py`
+- [x] B4: tests del watcher cubren patrón con directorio, symlink y exclusión del CWD
+- [x] B5: `to_utc_iso` con naive produce UTC, no hora local
+- [x] Suite 207 verde · golden al día · working tree sólo con los archivos previstos (LF)
+
+---
+
 ## 6. Explícitamente fuera de alcance (post-MVP)
 
 - Formato IIS
@@ -454,6 +509,7 @@ no los borra (sólo `down -v`), por eso la base sobrevive a un rebuild.
 | 4 | `streamlit run app/ui/app.py` con dataset sintético |
 | 5 | `python -m unittest tests.test_alerts -v` · 5k errores → 1 incidente |
 | 6 | `docker compose up --build` |
+| 7 | `python -m unittest tests.test_config tests.test_watcher -v` · `python -m tests.regenerate_golden --check` |
 
 **Orden de ejecución:** 0 → 1 → 2 → 3 → 4 → 5. Las fases 2 y 1 son el núcleo de
 dificultad; si el tiempo aprieta, el punto de corte honesto es "parser + ingesta
