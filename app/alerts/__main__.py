@@ -84,10 +84,12 @@ def main(argv: list[str] | None = None) -> int:
             )
 
         if args.export == "csv":
-            sys.stdout.write(export_incidents_csv(conn).decode("utf-8-sig"))
+            sys.stdout.write(
+                export_incidents_csv(conn, status=args.status).decode("utf-8-sig")
+            )
             return 0
         if args.export == "html":
-            sys.stdout.write(export_incidents_html(conn))
+            sys.stdout.write(export_incidents_html(conn, status=args.status))
             return 0
 
         if args.list or args.no_evaluate:
