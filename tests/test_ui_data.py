@@ -189,8 +189,8 @@ class IndexUsageTests(UiDataTestCase):
                 ),
             )
         )
-        self.assertNotIn("SCAN events", plan, f"la consulta escanea la tabla:\n{plan}")
-        self.assertIn("USING", plan)
+        self.assertNotIn("SCAN e", plan, f"la consulta escanea la tabla:\n{plan}")
+        self.assertIn("USING INDEX idx_events_ts", plan, plan)
 
     def test_el_filtro_por_servicio_usa_su_indice(self):
         plan = "\n".join(
@@ -198,7 +198,8 @@ class IndexUsageTests(UiDataTestCase):
                 self.conn, data.EventFilters(service="orders", min_severity=40)
             )
         )
-        self.assertNotIn("SCAN events", plan, f"la consulta escanea la tabla:\n{plan}")
+        self.assertNotIn("SCAN e", plan, f"la consulta escanea la tabla:\n{plan}")
+        self.assertIn("USING INDEX idx_events_service_ts", plan, plan)
 
 
 if __name__ == "__main__":

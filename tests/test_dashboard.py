@@ -25,6 +25,21 @@ from tests.helpers import EnvSandbox, REPO_ROOT
 
 HAS_STREAMLIT = importlib.util.find_spec("streamlit") is not None
 
+
+def setUpModule() -> None:
+    """Precalienta los imports pesados (streamlit/plotly/pandas).
+
+    `AppTest.run()` mide su propio timeout, así que el import en frío de estas
+    librerías sobre un filesystem lento (p. ej. WSL `/mnt/c`) agotaba los 30 s
+    del primer test. Importarlas aquí las saca del presupuesto del test.
+    """
+    if HAS_STREAMLIT:
+        import pandas
+        import plotly
+        import plotly.graph_objects
+        import streamlit
+
+
 SAMPLE_LOG = "".join(
     line + "\n"
     for line in [
@@ -115,7 +130,7 @@ class DashboardSmokeTests(unittest.TestCase):
         from streamlit.testing.v1 import AppTest
 
         self.write_logs()
-        at = AppTest.from_file(str(REPO_ROOT / "app" / "ui" / "app.py"), default_timeout=30)
+        at = AppTest.from_file(str(REPO_ROOT / "app" / "ui" / "app.py"), default_timeout=60)
         at.run()
 
         self.assert_no_exception(at)
@@ -125,7 +140,7 @@ class DashboardSmokeTests(unittest.TestCase):
     def test_app_sin_logs_muestra_estado_vacio(self):
         from streamlit.testing.v1 import AppTest
 
-        at = AppTest.from_file(str(REPO_ROOT / "app" / "ui" / "app.py"), default_timeout=30)
+        at = AppTest.from_file(str(REPO_ROOT / "app" / "ui" / "app.py"), default_timeout=60)
         at.run()
 
         self.assert_no_exception(at)
