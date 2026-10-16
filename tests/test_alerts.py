@@ -77,7 +77,7 @@ class AlertsTests(UiDataTestCase):
     def test_event_count_refleja_la_ventana_no_un_maximo(self):
         """`event_count` es el conteo de la ventana vigente, puede bajar."""
         for i in range(60):
-            self._insert(i, "fp-window", f"2026-10-05T12:{i:02d}:00Z")
+            self._insert(i, "fp-window", f"2026-10-05T12:{i:02d}:00.000Z")
         self.conn.commit()
         evaluate_incidents(self.conn, window_minutes=120, min_count=50)
         inc_id = int(
@@ -87,8 +87,8 @@ class AlertsTests(UiDataTestCase):
         )
         self.assertEqual(get_incident(self.conn, inc_id)["event_count"], 60)
 
-        # Ventana de 1 min: solo entran 12:58 y 12:59.
-        evaluate_incidents(self.conn, window_minutes=1, min_count=2)
+        # Ventana (12:57, 12:59] -> entran 12:58 y 12:59, no 12:57.
+        evaluate_incidents(self.conn, window_minutes=2, min_count=2)
         self.assertEqual(get_incident(self.conn, inc_id)["event_count"], 2)
 
     def test_evaluar_dos_veces_no_duplica_ni_falla(self):

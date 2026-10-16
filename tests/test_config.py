@@ -255,6 +255,56 @@ class MigrationTests(TempDbTestCase):
             set(range(1, SCHEMA_VERSION + 1)),
         )
 
+    def test_v1_duplicate_inode_upgrades_and_is_recoverable(self):
+        """Una base v1 con el mismo inode en dos filas no debe atascar el upgrade.
+
+        En v1 la identidad era la ruta (`UNIQUE(path)`), así que un rename de
+        logrotate podía dejar dos filas del mismo archivo físico. El rebuild a
+        v2 impone `UNIQUE (inode, generation)`: descartar una fila dejaría
+        huérfanos sus eventos y liberaría un `id` reutilizable. La migración las
+        numera con generaciones distintas para no perder ni filas ni eventos.
+        """
+        from app.db.migrations import _BASELINE_VERSION, _record
+
+        conn = self.connect()
+        conn.executescript((FIXTURES_DIR / "schema_v1.sql").read_text(encoding="utf-8"))
+        _record(conn, _BASELINE_VERSION)
+        for row_id, path in ((1, "logs/app.log"), (2, "logs/app.log.1")):
+            conn.execute(
+                "INSERT INTO log_files (id, path, inode, first_seen, last_seen) "
+                "VALUES (?, ?, 77, '2026-10-05T10:00:00Z', '2026-10-05T10:00:00Z')",
+                (row_id, path),
+            )
+        conn.execute(
+            "INSERT INTO events (file_id, offset, raw_line) VALUES (2, 0, 'pre-v2')"
+        )
+        conn.close()
+
+        self.assertEqual(
+            migrate(self.db_path),
+            list(range(_BASELINE_VERSION + 1, SCHEMA_VERSION + 1)),
+        )
+        self.assertEqual(migrate(self.db_path), [], "debe ser idempotente")
+
+        conn = self.connect()
+        self.assertEqual(
+            [tuple(r) for r in conn.execute("SELECT id, path, inode, generation FROM log_files")],
+            [(1, "logs/app.log", 77, 0), (2, "logs/app.log.1", 77, 1)],
+            "se conservan ambas filas con generaciones distintas",
+        )
+        huerfanos = conn.execute(
+            "SELECT COUNT(*) FROM events e "
+            "WHERE NOT EXISTS (SELECT 1 FROM log_files lf WHERE lf.id = e.file_id)"
+        ).fetchone()[0]
+        self.assertEqual(huerfanos, 0, "ningún evento debe quedar huérfano")
+        self.assertEqual(
+            conn.execute(
+                "SELECT COUNT(*) FROM sqlite_master WHERE name='log_files_v2'"
+            ).fetchone()[0],
+            0,
+            "no debe quedar la tabla transitoria tras una migración correcta",
+        )
+
     def test_refuses_newer_database(self):
         migrate(self.db_path)
         with self.assertRaises(RuntimeError):
