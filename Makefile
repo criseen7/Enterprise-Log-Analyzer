@@ -1,5 +1,6 @@
 PYTHON ?= python3
 VENV   ?= .venv
+PY     ?= $(VENV)/bin/python
 
 .DEFAULT_GOAL := help
 
@@ -15,22 +16,22 @@ install: ## Crea el venv e instala dependencias
 	$(VENV)/bin/pip install -r requirements.txt -r requirements-dev.txt
 
 migrate: ## Crea/actualiza la base de datos
-	$(PYTHON) -m app.db.migrations
+	$(PY) -m app.db.migrations
 
 migrate-status: ## Muestra el estado del esquema
-	$(PYTHON) -m app.db.migrations --status
+	$(PY) -m app.db.migrations --status
 
 test: ## Corre los tests
-	$(PYTHON) -m unittest discover -s tests -t . -q
+	$(PY) -m unittest discover -s tests -t . -q
 
 test-verbose: ## Tests con detalle
-	$(PYTHON) -m unittest discover -s tests -t . -v
+	$(PY) -m unittest discover -s tests -t . -v
 
 check-db: ## Verifica que la base existe y usa WAL
-	@$(PYTHON) -c "from app.db.connection import journal_mode; m = journal_mode('data/app.db'); print('journal_mode =', m); raise SystemExit(0 if m == 'wal' else 1)"
+	@$(PY) -c "from app.db.connection import journal_mode; m = journal_mode('data/app.db'); print('journal_mode =', m); raise SystemExit(0 if m == 'wal' else 1)"
 
 seed: ## Genera logs sintéticos para el demo
-	$(PYTHON) tools/generate_sample_logs.py
+	$(PY) tools/generate_sample_logs.py
 
 dashboard: ## Levanta el dashboard
 	streamlit run app/ui/app.py
@@ -43,7 +44,7 @@ reset-db: ## Borra la base de datos (migraciones y datos)
 	@echo "Base eliminada. Ejecuta 'make migrate' para recrearla."
 
 lint: ## Verifica sintaxis de todos los módulos
-	$(PYTHON) -m compileall -q app tools tests
+	$(PY) -m compileall -q app tools tests
 
 docker-build: ## Construye la imagen (Fase 6)
 	docker compose build
