@@ -32,8 +32,6 @@ db:
   busy_timeout_ms: 5000
   # NORMAL es seguro con WAL: sobrevive a crash de proceso, no necesariamente de SO.
   synchronous: NORMAL
-  # Max GB que puede ocupar la DB antes de exigirCompactación manual.
-  max_size_gb: 4
 
 analysis:
   # Reglas que clasifican cada evento al ingerirlo (categoría + fingerprint).

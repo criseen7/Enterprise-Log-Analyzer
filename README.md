@@ -7,7 +7,7 @@ de forma incremental, los normaliza, detecta errores críticos, agrupa patrones
 recurrentes y expone métricas en un dashboard interactivo con exportación de reportes.
 
 **Estado:** fases 0–6 implementadas. El MVP (0–5) corre en local y la Fase 6 lo
-empaqueta en Docker (`analyzer` + `dashboard`). 189 tests, 7 de ellos smoke del
+empaqueta en Docker (`analyzer` + `dashboard`). 207 tests, 8 de ellos smoke del
 dashboard (se saltan sin Streamlit) — ver [docs/PLAN.md](docs/PLAN.md). Para
 instalarlo y ejecutarlo, sigue la [Guía de uso](#guía-de-uso).
 
@@ -77,7 +77,7 @@ Enterprise-Log-Analyzer/
 │   │   └── watcher.py          watchdog con debounce
 │   ├── parser/
 │   │   ├── registry.py         PatternSpec · detect() · parse()
-│   │   ├── patterns/           apachev2.yaml · iis.yaml · weblogic.yaml · json.yaml
+│   │   ├── patterns/           apachev2.yaml · weblogic.yaml · json.yaml
 │   │   └── normalization.py    timestamp → UTC · nivel → severity
 │   ├── db/
 │   │   ├── connection.py       WAL · busy_timeout · contextmanager
@@ -115,7 +115,7 @@ Python; Docker sólo hace falta para la Fase 6 (post-MVP).
 
 ### Requisitos
 
-- **Python 3.11+** — el proyecto se desarrolla y prueba con **3.14**.
+- **Python 3.12+** — el proyecto se desarrolla y prueba con **3.14**.
 - **Git**, para clonar el repositorio.
 - (Opcional) **Docker**, para la Fase 6.
 
