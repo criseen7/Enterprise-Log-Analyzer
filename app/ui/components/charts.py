@@ -187,7 +187,7 @@ def hourly_with_spikes(series: list[dict], spikes: list[dict], *, height: int = 
         fig.add_trace(
             go.Scatter(
                 x=[_short(b) for b in buckets if b in spike_buckets],
-                y=[v for b, v in zip(buckets, values) if b in spike_buckets],
+                y=[v for b, v in zip(buckets, values, strict=True) if b in spike_buckets],
                 mode="markers",
                 marker=dict(color=SEVERITY_COLORS["FATAL"], size=11, symbol="diamond"),
                 name="anomalía",
