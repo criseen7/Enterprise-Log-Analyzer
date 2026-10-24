@@ -21,7 +21,7 @@ import sqlite3
 from collections.abc import Callable
 from pathlib import Path
 
-from app.db.connection import connect, journal_mode
+from app.db.connection import connect
 from app.db.schema import SCHEMA_PATH, SCHEMA_VERSION
 
 MIGRATIONS_DIR = Path(__file__).resolve().parent
@@ -33,6 +33,8 @@ _deltas: dict[int, Path] = {
     2: MIGRATIONS_DIR / "_002_log_files_identity.sql",
     3: MIGRATIONS_DIR / "_003_event_category.sql",
     4: MIGRATIONS_DIR / "_004_timestamp_millis.sql",
+    5: MIGRATIONS_DIR / "_005_agent_actions.sql",
+    6: MIGRATIONS_DIR / "_006_agent_runs.sql",
 }
 
 # Versiones que entrega la baseline. Debe ser exactamente los deltas cargados:
@@ -52,9 +54,7 @@ def _delta_003_already_applied(conn) -> bool:
     """
     if not _column_exists(conn, "events", "category"):
         return False
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_events_cat_ts ON events (category, timestamp_utc)"
-    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_events_cat_ts ON events (category, timestamp_utc)")
     return True
 
 
@@ -113,7 +113,9 @@ def _record(conn, version: int) -> None:
 def _ensure_meta_tables(conn) -> None:
     """Crea `schema_version` sin eso, `_current_version` no puede decidir nada."""
     if not _table_exists(conn, "schema_version"):
-        conn.execute("CREATE TABLE schema_version (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)")
+        conn.execute(
+            "CREATE TABLE schema_version (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)"
+        )
 
 
 def _apply_script(conn, script: Path, version: int) -> None:

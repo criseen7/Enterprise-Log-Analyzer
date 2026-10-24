@@ -12,9 +12,13 @@ from app.db.migrations import applied_versions, migrate, status
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="app.db.migrations", description="Migraciones de la base de datos")
+    parser = argparse.ArgumentParser(
+        prog="app.db.migrations", description="Migraciones de la base de datos"
+    )
     parser.add_argument("--status", action="store_true", help="Muestra el estado sin aplicar nada")
-    parser.add_argument("--db-path", type=Path, default=None, help="Sobrescribe db.path de la config")
+    parser.add_argument(
+        "--db-path", type=Path, default=None, help="Sobrescribe db.path de la config"
+    )
     args = parser.parse_args(argv)
 
     db_path = args.db_path or get_settings().paths.db_path
