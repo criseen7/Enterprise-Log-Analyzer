@@ -112,9 +112,7 @@ def run_polling(
     while max_cycles is None or cycles < max_cycles:
         rutas = {p for p in discover(config) if p.is_file()}
         if rutas:
-            ingest_paths_transactional(
-                conn, registry, rutas, config.ingest.chunk_bytes, efectivas
-            )
+            ingest_paths_transactional(conn, registry, rutas, config.ingest.chunk_bytes, efectivas)
             cycles += 1
             if on_cycle:
                 on_cycle(cycles)
@@ -206,9 +204,7 @@ def _watch_polling(config, conn, registry, on_cycle, rules) -> int:  # noqa: ANN
         while True:
             rutas = {p for p in discover(config) if p.is_file()}
             if rutas:
-                ingest_paths_transactional(
-                    conn, registry, rutas, config.ingest.chunk_bytes, rules
-                )
+                ingest_paths_transactional(conn, registry, rutas, config.ingest.chunk_bytes, rules)
                 cycles += 1
                 if on_cycle:
                     on_cycle(cycles)
