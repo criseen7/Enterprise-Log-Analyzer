@@ -1,0 +1,858 @@
+{
+  "description": "Casos golden del motor extendido (compare_windows / blast_radius).",
+  "compare": [
+    {
+      "name": "new_burst",
+      "args": {
+        "fingerprint": "fp_new_burst",
+        "since": "2026-10-01T10:00:00.000Z",
+        "until": "2026-10-01T11:00:00.000Z",
+        "baseline_since": "2026-10-01T09:00:00.000Z",
+        "baseline_until": "2026-10-01T10:00:00.000Z"
+      },
+      "events": [
+        {
+          "at": "2026-10-01T10:05:00.000Z",
+          "service": null,
+          "severity": 45
+        }
+      ]
+    },
+    {
+      "name": "stable",
+      "args": {
+        "fingerprint": "fp_stable",
+        "since": "2026-10-02T10:00:00.000Z",
+        "until": "2026-10-02T11:00:00.000Z",
+        "baseline_since": "2026-10-02T09:00:00.000Z",
+        "baseline_until": "2026-10-02T10:00:00.000Z"
+      },
+      "events": [
+        {
+          "at": "2026-10-02T09:30:00.000Z",
+          "service": null,
+          "severity": 45
+        },
+        {
+          "at": "2026-10-02T10:30:00.000Z",
+          "service": null,
+          "severity": 45
+        }
+      ]
+    },
+    {
+      "name": "decreased",
+      "args": {
+        "fingerprint": "fp_decreased",
+        "since": "2026-10-03T10:00:00.000Z",
+        "until": "2026-10-03T11:00:00.000Z",
+        "baseline_since": "2026-10-03T09:00:00.000Z",
+        "baseline_until": "2026-10-03T10:00:00.000Z"
+      },
+      "events": [
+        {
+          "at": "2026-10-03T09:00:00.000Z",
+          "service": null,
+          "severity": 45
+        },
+        {
+          "at": "2026-10-03T09:01:00.000Z",
+          "service": null,
+          "severity": 45
+        },
+        {
+          "at": "2026-10-03T09:02:00.000Z",
+          "service": null,
+          "severity": 45
+        },
+        {
+          "at": "2026-10-03T09:03:00.000Z",
+          "service": null,
+          "severity": 45
+        },
+        {
+          "at": "2026-10-03T09:04:00.000Z",
+          "service": null,
+          "severity": 45
+        },
+        {
+          "at": "2026-10-03T09:05:00.000Z",
+          "service": null,
+          "severity": 45
+        },
+        {
+          "at": "2026-10-03T09:06:00.000Z",
+          "service": null,
+          "severity": 45
+        },
+        {
+          "at": "2026-10-03T09:07:00.000Z",
+          "service": null,
+          "severity": 45
+        },
+        {
+          "at": "2026-10-03T09:08:00.000Z",
+          "service": null,
+          "severity": 45
+        },
+        {
+          "at": "2026-10-03T09:09:00.000Z",
+          "service": null,
+          "severity": 45
+        },
+        {
+          "at": "2026-10-03T10:30:00.000Z",
+          "service": null,
+          "severity": 45
+        }
+      ]
+    },
+    {
+      "name": "elevated_flat_baseline",
+      "args": {
+        "fingerprint": "fp_elevated_flat_baseline",
+        "since": "2026-10-04T15:00:00.000Z",
+        "until": "2026-10-04T16:00:00.000Z",
+        "baseline_since": "2026-10-04T09:00:00.000Z",
+        "baseline_until": "2026-10-04T15:00:00.000Z"
+      },
+      "events": [
+        {
+          "at": "2026-10-04T09:00:00.000Z",
+          "service": null,
+          "severity": 45
+        },
+        {
+          "at": "2026-10-04T09:01:00.000Z",
+          "service": null,
+          "severity": 45
+        },
+        {
+          "at": "2026-10-04T10:00:00.000Z",
+          "service": null,
+          "severity": 45
+        },
+        {
+          "at": "2026-10-04T10:01:00.000Z",
+          "service": null,
+          "severity": 45
+        },
+        {
+          "at": "2026-10-04T11:00:00.000Z",
+          "service": null,
+          "severity": 45
+        },
+        {
+          "at": "2026-10-04T11:01:00.000Z",
+          "service": null,
+          "severity": 45
+        },
+        {
+          "at": "2026-10-04T12:00:00.000Z",
+          "service": null,
+          "severity": 45
+        },
+        {
+          "at": "2026-10-04T12:01:00.000Z",
+          "service": null,
+          "severity": 45
+        },
+        {
+          "at": "2026-10-04T13:00:00.000Z",
+          "service": null,
+          "severity": 45
+        },
+        {
+          "at": "2026-10-04T13:01:00.000Z",
+          "service": null,
+          "severity": 45
+        },
+        {
+          "at": "2026-10-04T14:00:00.000Z",
+          "service": null,
+          "severity": 45
+        },
+        {
+          "at": "2026-10-04T14:01:00.000Z",
+          "service": null,
+          "severity": 45
+        },
+        {
+          "at": "2026-10-04T15:00:00.000Z",
+          "service": null,
+          "severity": 45
+        },
+        {
+          "at": "2026-10-04T15:01:00.000Z",
+          "service": null,
+          "severity": 45
+        },
+        {
+          "at": "2026-10-04T15:02:00.000Z",
+          "service": null,
+          "severity": 45
+        },
+        {
+          "at": "2026-10-04T15:03:00.000Z",
+          "service": null,
+          "severity": 45
+        },
+        {
+          "at": "2026-10-04T15:04:00.000Z",
+          "service": null,
+          "severity": 45
+        },
+        {
+          "at": "2026-10-04T15:05:00.000Z",
+          "service": null,
+          "severity": 45
+        },
+        {
+          "at": "2026-10-04T15:06:00.000Z",
+          "service": null,
+          "severity": 45
+        },
+        {
+          "at": "2026-10-04T15:07:00.000Z",
+          "service": null,
+          "severity": 45
+        },
+        {
+          "at": "2026-10-04T15:08:00.000Z",
+          "service": null,
+          "severity": 45
+        },
+        {
+          "at": "2026-10-04T15:09:00.000Z",
+          "service": null,
+          "severity": 45
+        }
+      ]
+    },
+    {
+      "name": "elevated_z_score",
+      "args": {
+        "fingerprint": "fp_elevated_z_score",
+        "since": "2026-10-05T15:00:00.000Z",
+        "until": "2026-10-05T16:00:00.000Z",
+        "baseline_since": "2026-10-05T09:00:00.000Z",
+        "baseline_until": "2026-10-05T15:00:00.000Z"
+      },
+      "events": [
+        {
+          "at": "2026-10-05T09:00:00.000Z",
+          "service": null,
+          "severity": 45
+        },
+        {
+          "at": "2026-10-05T10:00:00.000Z",
+          "service": null,
+          "severity": 45
+        },
+        {
+          "at": "2026-10-05T11:00:00.000Z",
+          "service": null,
+          "severity": 45
+        },
+        {
+          "at": "2026-10-05T11:01:00.000Z",
+          "service": null,
+          "severity": 45
+        },
+        {
+          "at": "2026-10-05T12:00:00.000Z",
+          "service": null,
+          "severity": 45
+        },
+        {
+          "at": "2026-10-05T12:01:00.000Z",
+          "service": null,
+          "severity": 45
+        },
+        {
+          "at": "2026-10-05T12:02:00.000Z",
+          "service": null,
+          "severity": 45
+        },
+        {
+          "at": "2026-10-05T13:00:00.000Z",
+          "service": null,
+          "severity": 45
+        },
+        {
+          "at": "2026-10-05T13:01:00.000Z",
+          "service": null,
+          "severity": 45
+        },
+        {
+          "at": "2026-10-05T14:00:00.000Z",
+          "service": null,
+          "severity": 45
+        },
+        {
+          "at": "2026-10-05T14:01:00.000Z",
+          "service": null,
+          "severity": 45
+        },
+        {
+          "at": "2026-10-05T14:02:00.000Z",
+          "service": null,
+          "severity": 45
+        },
+        {
+          "at": "2026-10-05T15:00:00.000Z",
+          "service": null,
+          "severity": 45
+        },
+        {
+          "at": "2026-10-05T15:01:00.000Z",
+          "service": null,
+          "severity": 45
+        },
+        {
+          "at": "2026-10-05T15:02:00.000Z",
+          "service": null,
+          "severity": 45
+        },
+        {
+          "at": "2026-10-05T15:03:00.000Z",
+          "service": null,
+          "severity": 45
+        },
+        {
+          "at": "2026-10-05T15:04:00.000Z",
+          "service": null,
+          "severity": 45
+        },
+        {
+          "at": "2026-10-05T15:05:00.000Z",
+          "service": null,
+          "severity": 45
+        },
+        {
+          "at": "2026-10-05T15:06:00.000Z",
+          "service": null,
+          "severity": 45
+        },
+        {
+          "at": "2026-10-05T15:07:00.000Z",
+          "service": null,
+          "severity": 45
+        },
+        {
+          "at": "2026-10-05T15:08:00.000Z",
+          "service": null,
+          "severity": 45
+        },
+        {
+          "at": "2026-10-05T15:09:00.000Z",
+          "service": null,
+          "severity": 45
+        }
+      ]
+    },
+    {
+      "name": "stable_high_ratio_high_variance",
+      "args": {
+        "fingerprint": "fp_stable_high_ratio_high_variance",
+        "since": "2026-10-06T15:00:00.000Z",
+        "until": "2026-10-06T16:00:00.000Z",
+        "baseline_since": "2026-10-06T09:00:00.000Z",
+        "baseline_until": "2026-10-06T15:00:00.000Z"
+      },
+      "events": [
+        {
+          "at": "2026-10-06T13:00:00.000Z",
+          "service": null,
+          "severity": 45
+        },
+        {
+          "at": "2026-10-06T13:01:00.000Z",
+          "service": null,
+          "severity": 45
+        },
+        {
+          "at": "2026-10-06T13:02:00.000Z",
+          "service": null,
+          "severity": 45
+        },
+        {
+          "at": "2026-10-06T13:03:00.000Z",
+          "service": null,
+          "severity": 45
+        },
+        {
+          "at": "2026-10-06T13:04:00.000Z",
+          "service": null,
+          "severity": 45
+        },
+        {
+          "at": "2026-10-06T13:05:00.000Z",
+          "service": null,
+          "severity": 45
+        },
+        {
+          "at": "2026-10-06T13:06:00.000Z",
+          "service": null,
+          "severity": 45
+        },
+        {
+          "at": "2026-10-06T13:07:00.000Z",
+          "service": null,
+          "severity": 45
+        },
+        {
+          "at": "2026-10-06T13:08:00.000Z",
+          "service": null,
+          "severity": 45
+        },
+        {
+          "at": "2026-10-06T13:09:00.000Z",
+          "service": null,
+          "severity": 45
+        },
+        {
+          "at": "2026-10-06T13:10:00.000Z",
+          "service": null,
+          "severity": 45
+        },
+        {
+          "at": "2026-10-06T13:11:00.000Z",
+          "service": null,
+          "severity": 45
+        },
+        {
+          "at": "2026-10-06T15:00:00.000Z",
+          "service": null,
+          "severity": 45
+        },
+        {
+          "at": "2026-10-06T15:01:00.000Z",
+          "service": null,
+          "severity": 45
+        },
+        {
+          "at": "2026-10-06T15:02:00.000Z",
+          "service": null,
+          "severity": 45
+        },
+        {
+          "at": "2026-10-06T15:03:00.000Z",
+          "service": null,
+          "severity": 45
+        },
+        {
+          "at": "2026-10-06T15:04:00.000Z",
+          "service": null,
+          "severity": 45
+        },
+        {
+          "at": "2026-10-06T15:05:00.000Z",
+          "service": null,
+          "severity": 45
+        }
+      ]
+    },
+    {
+      "name": "high_confidence",
+      "args": {
+        "fingerprint": "fp_high_confidence",
+        "since": "2026-10-08T09:00:00.000Z",
+        "until": "2026-10-08T10:00:00.000Z",
+        "baseline_since": "2026-10-07T09:00:00.000Z",
+        "baseline_until": "2026-10-08T09:00:00.000Z"
+      },
+      "events": [
+        {
+          "at": "2026-10-07T09:15:00.000Z",
+          "service": null,
+          "severity": 45
+        },
+        {
+          "at": "2026-10-07T10:15:00.000Z",
+          "service": null,
+          "severity": 45
+        },
+        {
+          "at": "2026-10-07T11:15:00.000Z",
+          "service": null,
+          "severity": 45
+        },
+        {
+          "at": "2026-10-07T12:15:00.000Z",
+          "service": null,
+          "severity": 45
+        },
+        {
+          "at": "2026-10-07T13:15:00.000Z",
+          "service": null,
+          "severity": 45
+        },
+        {
+          "at": "2026-10-07T14:15:00.000Z",
+          "service": null,
+          "severity": 45
+        },
+        {
+          "at": "2026-10-07T15:15:00.000Z",
+          "service": null,
+          "severity": 45
+        },
+        {
+          "at": "2026-10-07T16:15:00.000Z",
+          "service": null,
+          "severity": 45
+        },
+        {
+          "at": "2026-10-07T17:15:00.000Z",
+          "service": null,
+          "severity": 45
+        },
+        {
+          "at": "2026-10-07T18:15:00.000Z",
+          "service": null,
+          "severity": 45
+        },
+        {
+          "at": "2026-10-07T19:15:00.000Z",
+          "service": null,
+          "severity": 45
+        },
+        {
+          "at": "2026-10-07T20:15:00.000Z",
+          "service": null,
+          "severity": 45
+        },
+        {
+          "at": "2026-10-07T21:15:00.000Z",
+          "service": null,
+          "severity": 45
+        },
+        {
+          "at": "2026-10-07T22:15:00.000Z",
+          "service": null,
+          "severity": 45
+        },
+        {
+          "at": "2026-10-07T23:15:00.000Z",
+          "service": null,
+          "severity": 45
+        },
+        {
+          "at": "2026-10-08T00:15:00.000Z",
+          "service": null,
+          "severity": 45
+        },
+        {
+          "at": "2026-10-08T01:15:00.000Z",
+          "service": null,
+          "severity": 45
+        },
+        {
+          "at": "2026-10-08T02:15:00.000Z",
+          "service": null,
+          "severity": 45
+        },
+        {
+          "at": "2026-10-08T03:15:00.000Z",
+          "service": null,
+          "severity": 45
+        },
+        {
+          "at": "2026-10-08T04:15:00.000Z",
+          "service": null,
+          "severity": 45
+        },
+        {
+          "at": "2026-10-08T05:15:00.000Z",
+          "service": null,
+          "severity": 45
+        },
+        {
+          "at": "2026-10-08T06:15:00.000Z",
+          "service": null,
+          "severity": 45
+        },
+        {
+          "at": "2026-10-08T07:15:00.000Z",
+          "service": null,
+          "severity": 45
+        },
+        {
+          "at": "2026-10-08T08:15:00.000Z",
+          "service": null,
+          "severity": 45
+        },
+        {
+          "at": "2026-10-08T09:30:00.000Z",
+          "service": null,
+          "severity": 45
+        }
+      ]
+    },
+    {
+      "name": "auto_baseline",
+      "args": {
+        "fingerprint": "fp_auto_baseline",
+        "since": "2026-10-09T10:00:00.000Z",
+        "until": "2026-10-09T11:00:00.000Z"
+      },
+      "events": [
+        {
+          "at": "2026-10-09T09:30:00.000Z",
+          "service": null,
+          "severity": 45
+        },
+        {
+          "at": "2026-10-09T10:10:00.000Z",
+          "service": null,
+          "severity": 45
+        },
+        {
+          "at": "2026-10-09T10:20:00.000Z",
+          "service": null,
+          "severity": 45
+        },
+        {
+          "at": "2026-10-09T10:30:00.000Z",
+          "service": null,
+          "severity": 45
+        },
+        {
+          "at": "2026-10-09T10:40:00.000Z",
+          "service": null,
+          "severity": 45
+        },
+        {
+          "at": "2026-10-09T10:50:00.000Z",
+          "service": null,
+          "severity": 45
+        }
+      ]
+    },
+    {
+      "name": "not_measurable",
+      "args": {
+        "fingerprint": "fp_not_measurable",
+        "since": "2026-10-10T10:00:00.000Z"
+      },
+      "events": [
+        {
+          "at": "2026-10-10T10:05:00.000Z",
+          "service": null,
+          "severity": 45
+        }
+      ]
+    }
+  ],
+  "blast": [
+    {
+      "name": "single_service",
+      "args": {
+        "fingerprint": "fp_b_single_service",
+        "since": "2026-11-01T10:00:00.000Z",
+        "until": "2026-11-01T11:00:00.000Z"
+      },
+      "events": [
+        {
+          "at": "2026-11-01T10:00:00.000Z",
+          "service": "api",
+          "severity": 45
+        },
+        {
+          "at": "2026-11-01T10:01:00.000Z",
+          "service": "api",
+          "severity": 45
+        },
+        {
+          "at": "2026-11-01T10:02:00.000Z",
+          "service": "api",
+          "severity": 45
+        }
+      ]
+    },
+    {
+      "name": "cascade_overlap",
+      "args": {
+        "fingerprint": "fp_b_cascade_overlap",
+        "since": "2026-11-02T10:00:00.000Z",
+        "until": "2026-11-02T11:00:00.000Z"
+      },
+      "events": [
+        {
+          "at": "2026-11-02T10:00:00.000Z",
+          "service": "db",
+          "severity": 45
+        },
+        {
+          "at": "2026-11-02T10:05:00.000Z",
+          "service": "db",
+          "severity": 45
+        },
+        {
+          "at": "2026-11-02T10:04:00.000Z",
+          "service": "api",
+          "severity": 45
+        },
+        {
+          "at": "2026-11-02T10:10:00.000Z",
+          "service": "api",
+          "severity": 45
+        }
+      ]
+    },
+    {
+      "name": "cascade_gap",
+      "args": {
+        "fingerprint": "fp_b_cascade_gap",
+        "since": "2026-11-03T10:00:00.000Z",
+        "until": "2026-11-03T11:00:00.000Z"
+      },
+      "events": [
+        {
+          "at": "2026-11-03T10:00:00.000Z",
+          "service": "db",
+          "severity": 45
+        },
+        {
+          "at": "2026-11-03T10:02:00.000Z",
+          "service": "db",
+          "severity": 45
+        },
+        {
+          "at": "2026-11-03T10:10:00.000Z",
+          "service": "api",
+          "severity": 45
+        },
+        {
+          "at": "2026-11-03T10:12:00.000Z",
+          "service": "api",
+          "severity": 45
+        }
+      ]
+    },
+    {
+      "name": "no_cascade_gap",
+      "args": {
+        "fingerprint": "fp_b_no_cascade_gap",
+        "since": "2026-11-04T10:00:00.000Z",
+        "until": "2026-11-04T12:00:00.000Z"
+      },
+      "events": [
+        {
+          "at": "2026-11-04T10:00:00.000Z",
+          "service": "db",
+          "severity": 45
+        },
+        {
+          "at": "2026-11-04T10:02:00.000Z",
+          "service": "db",
+          "severity": 45
+        },
+        {
+          "at": "2026-11-04T11:00:00.000Z",
+          "service": "api",
+          "severity": 45
+        },
+        {
+          "at": "2026-11-04T11:02:00.000Z",
+          "service": "api",
+          "severity": 45
+        }
+      ]
+    },
+    {
+      "name": "three_services",
+      "args": {
+        "fingerprint": "fp_b_three_services",
+        "since": "2026-11-05T10:00:00.000Z",
+        "until": "2026-11-05T11:00:00.000Z"
+      },
+      "events": [
+        {
+          "at": "2026-11-05T10:00:00.000Z",
+          "service": "db",
+          "severity": 45
+        },
+        {
+          "at": "2026-11-05T10:01:00.000Z",
+          "service": "db",
+          "severity": 45
+        },
+        {
+          "at": "2026-11-05T10:02:00.000Z",
+          "service": "db",
+          "severity": 45
+        },
+        {
+          "at": "2026-11-05T10:05:00.000Z",
+          "service": "api",
+          "severity": 45
+        },
+        {
+          "at": "2026-11-05T10:50:00.000Z",
+          "service": "cache",
+          "severity": 45
+        }
+      ]
+    },
+    {
+      "name": "no_bounds",
+      "args": {
+        "fingerprint": "fp_b_no_bounds"
+      },
+      "events": [
+        {
+          "at": "2026-11-06T10:00:00.000Z",
+          "service": "db",
+          "severity": 45
+        },
+        {
+          "at": "2026-11-06T10:05:00.000Z",
+          "service": "api",
+          "severity": 45
+        }
+      ]
+    },
+    {
+      "name": "wide_correlation_window",
+      "args": {
+        "fingerprint": "fp_b_wide_correlation_window",
+        "since": "2026-11-07T10:00:00.000Z",
+        "until": "2026-11-07T12:00:00.000Z",
+        "correlation_window_minutes": 60
+      },
+      "events": [
+        {
+          "at": "2026-11-07T10:00:00.000Z",
+          "service": "db",
+          "severity": 45
+        },
+        {
+          "at": "2026-11-07T10:02:00.000Z",
+          "service": "db",
+          "severity": 45
+        },
+        {
+          "at": "2026-11-07T11:00:00.000Z",
+          "service": "api",
+          "severity": 45
+        },
+        {
+          "at": "2026-11-07T11:02:00.000Z",
+          "service": "api",
+          "severity": 45
+        }
+      ]
+    },
+    {
+      "name": "no_events",
+      "args": {
+        "fingerprint": "fp_b_no_events",
+        "since": "2026-11-08T10:00:00.000Z",
+        "until": "2026-11-08T11:00:00.000Z"
+      },
+      "events": []
+    }
+  ]
+}

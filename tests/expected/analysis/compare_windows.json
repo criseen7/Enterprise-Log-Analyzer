@@ -1,0 +1,380 @@
+[
+  {
+    "name": "new_burst",
+    "result": {
+      "fingerprint": "fp_new_burst",
+      "category": "golden",
+      "sample_message": "golden message",
+      "severity": 45,
+      "window": {
+        "label": "window",
+        "since": "2026-10-01T10:00:00.000Z",
+        "until": "2026-10-01T11:00:00.000Z",
+        "count": 1,
+        "rate_per_hour": 1.0,
+        "share_of_errors": 1.0,
+        "distinct_services": 0,
+        "hours": 1,
+        "hourly": [
+          1
+        ],
+        "stddev": 0.0
+      },
+      "baseline": {
+        "label": "baseline",
+        "since": "2026-10-01T09:00:00.000Z",
+        "until": "2026-10-01T10:00:00.000Z",
+        "count": 0,
+        "rate_per_hour": 0.0,
+        "share_of_errors": 0.0,
+        "distinct_services": 0,
+        "hours": 1,
+        "hourly": [
+          0
+        ],
+        "stddev": 0.0
+      },
+      "ratio": null,
+      "z_score": null,
+      "verdict": "new",
+      "confidence": "low",
+      "affected_services": []
+    }
+  },
+  {
+    "name": "stable",
+    "result": {
+      "fingerprint": "fp_stable",
+      "category": "golden",
+      "sample_message": "golden message",
+      "severity": 45,
+      "window": {
+        "label": "window",
+        "since": "2026-10-02T10:00:00.000Z",
+        "until": "2026-10-02T11:00:00.000Z",
+        "count": 1,
+        "rate_per_hour": 1.0,
+        "share_of_errors": 1.0,
+        "distinct_services": 0,
+        "hours": 1,
+        "hourly": [
+          1
+        ],
+        "stddev": 0.0
+      },
+      "baseline": {
+        "label": "baseline",
+        "since": "2026-10-02T09:00:00.000Z",
+        "until": "2026-10-02T10:00:00.000Z",
+        "count": 1,
+        "rate_per_hour": 1.0,
+        "share_of_errors": 1.0,
+        "distinct_services": 0,
+        "hours": 1,
+        "hourly": [
+          1
+        ],
+        "stddev": 0.0
+      },
+      "ratio": 1.0,
+      "z_score": null,
+      "verdict": "stable",
+      "confidence": "low",
+      "affected_services": []
+    }
+  },
+  {
+    "name": "decreased",
+    "result": {
+      "fingerprint": "fp_decreased",
+      "category": "golden",
+      "sample_message": "golden message",
+      "severity": 45,
+      "window": {
+        "label": "window",
+        "since": "2026-10-03T10:00:00.000Z",
+        "until": "2026-10-03T11:00:00.000Z",
+        "count": 1,
+        "rate_per_hour": 1.0,
+        "share_of_errors": 1.0,
+        "distinct_services": 0,
+        "hours": 1,
+        "hourly": [
+          1
+        ],
+        "stddev": 0.0
+      },
+      "baseline": {
+        "label": "baseline",
+        "since": "2026-10-03T09:00:00.000Z",
+        "until": "2026-10-03T10:00:00.000Z",
+        "count": 10,
+        "rate_per_hour": 10.0,
+        "share_of_errors": 1.0,
+        "distinct_services": 0,
+        "hours": 1,
+        "hourly": [
+          10
+        ],
+        "stddev": 0.0
+      },
+      "ratio": 0.1,
+      "z_score": null,
+      "verdict": "decreased",
+      "confidence": "low",
+      "affected_services": []
+    }
+  },
+  {
+    "name": "elevated_flat_baseline",
+    "result": {
+      "fingerprint": "fp_elevated_flat_baseline",
+      "category": "golden",
+      "sample_message": "golden message",
+      "severity": 45,
+      "window": {
+        "label": "window",
+        "since": "2026-10-04T15:00:00.000Z",
+        "until": "2026-10-04T16:00:00.000Z",
+        "count": 10,
+        "rate_per_hour": 10.0,
+        "share_of_errors": 1.0,
+        "distinct_services": 0,
+        "hours": 1,
+        "hourly": [
+          10
+        ],
+        "stddev": 0.0
+      },
+      "baseline": {
+        "label": "baseline",
+        "since": "2026-10-04T09:00:00.000Z",
+        "until": "2026-10-04T15:00:00.000Z",
+        "count": 12,
+        "rate_per_hour": 2.0,
+        "share_of_errors": 1.0,
+        "distinct_services": 0,
+        "hours": 6,
+        "hourly": [
+          2,
+          2,
+          2,
+          2,
+          2,
+          2
+        ],
+        "stddev": 0.0
+      },
+      "ratio": 5.0,
+      "z_score": null,
+      "verdict": "elevated",
+      "confidence": "medium",
+      "affected_services": []
+    }
+  },
+  {
+    "name": "elevated_z_score",
+    "result": {
+      "fingerprint": "fp_elevated_z_score",
+      "category": "golden",
+      "sample_message": "golden message",
+      "severity": 45,
+      "window": {
+        "label": "window",
+        "since": "2026-10-05T15:00:00.000Z",
+        "until": "2026-10-05T16:00:00.000Z",
+        "count": 10,
+        "rate_per_hour": 10.0,
+        "share_of_errors": 1.0,
+        "distinct_services": 0,
+        "hours": 1,
+        "hourly": [
+          10
+        ],
+        "stddev": 0.0
+      },
+      "baseline": {
+        "label": "baseline",
+        "since": "2026-10-05T09:00:00.000Z",
+        "until": "2026-10-05T15:00:00.000Z",
+        "count": 12,
+        "rate_per_hour": 2.0,
+        "share_of_errors": 1.0,
+        "distinct_services": 0,
+        "hours": 6,
+        "hourly": [
+          1,
+          1,
+          2,
+          3,
+          2,
+          3
+        ],
+        "stddev": 0.816496580927726
+      },
+      "ratio": 5.0,
+      "z_score": 9.797958971132712,
+      "verdict": "elevated",
+      "confidence": "medium",
+      "affected_services": []
+    }
+  },
+  {
+    "name": "stable_high_ratio_high_variance",
+    "result": {
+      "fingerprint": "fp_stable_high_ratio_high_variance",
+      "category": "golden",
+      "sample_message": "golden message",
+      "severity": 45,
+      "window": {
+        "label": "window",
+        "since": "2026-10-06T15:00:00.000Z",
+        "until": "2026-10-06T16:00:00.000Z",
+        "count": 6,
+        "rate_per_hour": 6.0,
+        "share_of_errors": 1.0,
+        "distinct_services": 0,
+        "hours": 1,
+        "hourly": [
+          6
+        ],
+        "stddev": 0.0
+      },
+      "baseline": {
+        "label": "baseline",
+        "since": "2026-10-06T09:00:00.000Z",
+        "until": "2026-10-06T15:00:00.000Z",
+        "count": 12,
+        "rate_per_hour": 2.0,
+        "share_of_errors": 1.0,
+        "distinct_services": 0,
+        "hours": 6,
+        "hourly": [
+          0,
+          0,
+          0,
+          0,
+          12,
+          0
+        ],
+        "stddev": 4.47213595499958
+      },
+      "ratio": 3.0,
+      "z_score": 0.8944271909999159,
+      "verdict": "stable",
+      "confidence": "medium",
+      "affected_services": []
+    }
+  },
+  {
+    "name": "high_confidence",
+    "result": {
+      "fingerprint": "fp_high_confidence",
+      "category": "golden",
+      "sample_message": "golden message",
+      "severity": 45,
+      "window": {
+        "label": "window",
+        "since": "2026-10-08T09:00:00.000Z",
+        "until": "2026-10-08T10:00:00.000Z",
+        "count": 1,
+        "rate_per_hour": 1.0,
+        "share_of_errors": 1.0,
+        "distinct_services": 0,
+        "hours": 1,
+        "hourly": [
+          1
+        ],
+        "stddev": 0.0
+      },
+      "baseline": {
+        "label": "baseline",
+        "since": "2026-10-07T09:00:00.000Z",
+        "until": "2026-10-08T09:00:00.000Z",
+        "count": 24,
+        "rate_per_hour": 1.0,
+        "share_of_errors": 1.0,
+        "distinct_services": 0,
+        "hours": 24,
+        "hourly": [
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "stddev": 0.0
+      },
+      "ratio": 1.0,
+      "z_score": null,
+      "verdict": "stable",
+      "confidence": "high",
+      "affected_services": []
+    }
+  },
+  {
+    "name": "auto_baseline",
+    "result": {
+      "fingerprint": "fp_auto_baseline",
+      "category": "golden",
+      "sample_message": "golden message",
+      "severity": 45,
+      "window": {
+        "label": "window",
+        "since": "2026-10-09T10:00:00.000Z",
+        "until": "2026-10-09T11:00:00.000Z",
+        "count": 5,
+        "rate_per_hour": 5.0,
+        "share_of_errors": 1.0,
+        "distinct_services": 0,
+        "hours": 1,
+        "hourly": [
+          5
+        ],
+        "stddev": 0.0
+      },
+      "baseline": {
+        "label": "baseline",
+        "since": "2026-10-09T09:00:00.000Z",
+        "until": "2026-10-09T10:00:00.000Z",
+        "count": 1,
+        "rate_per_hour": 1.0,
+        "share_of_errors": 1.0,
+        "distinct_services": 0,
+        "hours": 1,
+        "hourly": [
+          1
+        ],
+        "stddev": 0.0
+      },
+      "ratio": 5.0,
+      "z_score": null,
+      "verdict": "elevated",
+      "confidence": "low",
+      "affected_services": []
+    }
+  },
+  {
+    "name": "not_measurable",
+    "result": null
+  }
+]
