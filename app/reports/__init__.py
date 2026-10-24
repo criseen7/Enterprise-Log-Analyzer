@@ -4,9 +4,8 @@ from __future__ import annotations
 
 import csv
 import io
-from typing import Any
-
 import sqlite3
+from typing import Any
 
 
 def export_incidents_csv(conn: sqlite3.Connection, *, status: str | None = None) -> bytes:
@@ -84,7 +83,7 @@ def export_incidents_html(conn: sqlite3.Connection, *, status: str | None = None
 
     parts = [
         "<!DOCTYPE html>",
-        "<html><head><meta charset=\"utf-8\"><title>Incidents</title>",
+        '<html><head><meta charset="utf-8"><title>Incidents</title>',
         "<style>table{border-collapse:collapse}td,th{border:1px solid #ccc;padding:4px}</style>",
         "</head><body>",
         "<h1>Incidents</h1>",

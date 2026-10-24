@@ -25,8 +25,18 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 ISO8601 = "iso8601"
 
 _MONTHS_EN = {
-    "jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
-    "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12,
+    "jan": 1,
+    "feb": 2,
+    "mar": 3,
+    "apr": 4,
+    "may": 5,
+    "jun": 6,
+    "jul": 7,
+    "aug": 8,
+    "sep": 9,
+    "oct": 10,
+    "nov": 11,
+    "dec": 12,
 }
 _MONTH_RE = re.compile(r"\b(" + "|".join(_MONTHS_EN) + r")\b", re.IGNORECASE)
 
@@ -97,9 +107,7 @@ def parse_timestamp(
         source = default_timezone if assumed else _format_offset(parsed)
         return parsed.astimezone(UTC), source
 
-    raise TimestampError(
-        f"ningún formato coincide con {raw!r}: " + "; ".join(errors)
-    )
+    raise TimestampError(f"ningún formato coincide con {raw!r}: " + "; ".join(errors))
 
 
 def _format_offset(value: datetime) -> str:

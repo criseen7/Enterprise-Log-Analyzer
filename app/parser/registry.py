@@ -26,9 +26,10 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 from zoneinfo import ZoneInfo
 
 import yaml
@@ -51,6 +52,7 @@ _REGEX_FLAGS: dict[str, int] = {
     "multiline": re.MULTILINE,
     "verbose": re.VERBOSE,
 }
+
 
 # Para interpolar message_template sin que un grupo ausente rompa el formato.
 class _Groups(dict):
@@ -159,7 +161,9 @@ def _as_str_tuple(value: Any, label: str, path: Path) -> tuple[str, ...]:
     raise PatternError(f"{path.name}: {label} debe ser string o lista de strings")
 
 
-def _timestamp_options(data: dict[str, Any], path: Path) -> tuple[tuple[str, ...], str | None, bool]:
+def _timestamp_options(
+    data: dict[str, Any], path: Path
+) -> tuple[tuple[str, ...], str | None, bool]:
     """Lee las opciones de timestamp aceptan tanto la forma anidada como la plana.
 
     Aceptado:
@@ -174,7 +178,9 @@ def _timestamp_options(data: dict[str, Any], path: Path) -> tuple[tuple[str, ...
         raise PatternError(f"{path.name}: 'timestamp' debe ser un bloque con 'formats'")
 
     section = section or {}
-    formats = _as_str_tuple(section.get("formats", data.get("timestamp_formats")), "timestamp.formats", path)
+    formats = _as_str_tuple(
+        section.get("formats", data.get("timestamp_formats")), "timestamp.formats", path
+    )
     declared = section.get("default_timezone", data.get("default_timezone"))
     timezone = str(declared) if declared else None
     english_months = bool(section.get("english_months", data.get("english_months", False)))
@@ -192,7 +198,9 @@ def _load_spec(path: Path) -> PatternSpec:
     name = str(_require(data, "name", path))
     kind = str(data.get("kind", KIND_REGEX)).lower()
     if kind not in (KIND_REGEX, KIND_JSON):
-        raise PatternError(f"{path.name}: kind debe ser '{KIND_REGEX}' o '{KIND_JSON}', no {kind!r}")
+        raise PatternError(
+            f"{path.name}: kind debe ser '{KIND_REGEX}' o '{KIND_JSON}', no {kind!r}"
+        )
 
     formats, timezone, english_months = _timestamp_options(data, path)
     # La zona se valida al cargar, no al parsear: una zona inválida debe romper
@@ -202,7 +210,9 @@ def _load_spec(path: Path) -> PatternSpec:
         try:
             ZoneInfo(timezone)
         except Exception as exc:  # noqa: BLE001 - ZoneInfo lanza varios tipos
-            raise PatternError(f"{path.name}: default_timezone inválido {timezone!r}: {exc}") from exc
+            raise PatternError(
+                f"{path.name}: default_timezone inválido {timezone!r}: {exc}"
+            ) from exc
 
     spec = PatternSpec(
         name=name,
@@ -336,7 +346,7 @@ class Registry:
         )
 
     @classmethod
-    def from_directory(cls, directory: str | Path, *, default_timezone: str = "UTC") -> "Registry":
+    def from_directory(cls, directory: str | Path, *, default_timezone: str = "UTC") -> Registry:
         return cls(load_patterns(directory), default_timezone=default_timezone)
 
     @property
@@ -375,7 +385,9 @@ class Registry:
         """Convierte una línea en `ParseResult`. Nunca lanza por datos malos."""
         text = line.rstrip("\n").rstrip("\r")
         if not text.strip():
-            return ParseResult(pattern="", parsed_ok=False, raw_line=text, parse_error="línea vacía")
+            return ParseResult(
+                pattern="", parsed_ok=False, raw_line=text, parse_error="línea vacía"
+            )
 
         spec = self.detect(text)
         if spec is None:
@@ -411,7 +423,9 @@ class Registry:
             )
 
     @staticmethod
-    def _resolve_zone(spec: PatternSpec, ts_raw: str, zone_raw: str | None) -> tuple[str, str | None]:
+    def _resolve_zone(
+        spec: PatternSpec, ts_raw: str, zone_raw: str | None
+    ) -> tuple[str, str | None]:
         """Sustituye una zona abreviada por su offset numérico, dentro del timestamp.
 
         `strptime` con `%z` no entiende `CEST`, y en logs de servidores
@@ -451,7 +465,7 @@ class Registry:
         head, continuation = _split_entry(text, spec)
 
         match = spec.regex.search(head)
-        if match is None:  #pragma: no cover - detect() ya lo garantiza
+        if match is None:  # pragma: no cover - detect() ya lo garantiza
             return ParseResult(spec.name, False, text, "el regex dejó de coincidir", message=text)
         groups = _Groups(match.groupdict())
 
@@ -501,9 +515,7 @@ class Registry:
         try:
             payload = json.loads(text)
         except json.JSONDecodeError as exc:
-            return ParseResult(
-                spec.name, False, text, f"JSON inválido: {exc}", message=text
-            )
+            return ParseResult(spec.name, False, text, f"JSON inválido: {exc}", message=text)
         if not isinstance(payload, dict):
             return ParseResult(
                 spec.name, False, text, "JSON de primer nivel no es un objeto", message=text
