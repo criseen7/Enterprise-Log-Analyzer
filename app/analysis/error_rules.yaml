@@ -54,6 +54,16 @@ rules:
       - "IndexOutOfBounds"
       - "ClassCastException"
 
+  - id: tls-certificate
+    category: tls
+    description: certificado TLS expirado o inválido
+    patterns:
+      - "certificate expired"
+      - "certificate has expired"
+      - "certificate verify failed"
+      - "SSLHandshakeException"
+      - "certificado expirado"
+
   - id: connection-refused
     category: connection
     description: la conexión no se establece
