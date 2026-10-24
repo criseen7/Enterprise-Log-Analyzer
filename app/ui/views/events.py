@@ -32,7 +32,7 @@ def render(selected: EventFilters) -> None:
         "Sólo líneas sin parsear (parsed_ok = 0)",
         value=selected.unparsed_only,
         help="Lo que ningún patrón reconoció. Se conserva y se reporta: es el "
-             "indicador de pérdida de datos del dataset.",
+        "indicador de pérdida de datos del dataset.",
     )
     if only_unparsed != selected.unparsed_only:
         # La severidad se pone a 0: estas líneas son UNKNOWN, y decir
@@ -59,26 +59,22 @@ def render(selected: EventFilters) -> None:
             st.session_state["events_page"] = 1
 
         page_size = st.selectbox(
-            "Filas por página", [50, 100, 250, 500], index=[50, 100, 250, 500].index(
-                settings.ui.default_page_size
-            ) if settings.ui.default_page_size in (50, 100, 250, 500) else 1,
+            "Filas por página",
+            [50, 100, 250, 500],
+            index=[50, 100, 250, 500].index(settings.ui.default_page_size)
+            if settings.ui.default_page_size in (50, 100, 250, 500)
+            else 1,
         )
         pages = max(1, math.ceil(total / page_size))
         page = st.number_input("Página", min_value=1, max_value=pages, step=1, key="events_page")
 
-        rows = data.fetch_events(
-            conn, selected, limit=page_size, offset=(page - 1) * page_size
-        )
+        rows = data.fetch_events(conn, selected, limit=page_size, offset=(page - 1) * page_size)
 
     coincidencias = (
-        "1 evento coincide"
-        if total == 1
-        else f"{total:,} eventos coinciden".replace(",", ".")
+        "1 evento coincide" if total == 1 else f"{total:,} eventos coinciden".replace(",", ".")
     )
     st.caption(
-        f"{coincidencias} · mostrando {len(rows):,} (página {page} de {pages})".replace(
-            ",", "."
-        )
+        f"{coincidencias} · mostrando {len(rows):,} (página {page} de {pages})".replace(",", ".")
     )
     tables.events_table([dict(row) for row in rows])
     tables.event_inspector([dict(row) for row in rows])

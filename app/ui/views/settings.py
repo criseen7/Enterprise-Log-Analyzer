@@ -36,9 +36,7 @@ def _run_ingest() -> str:
     if not paths:
         return f"no hay archivos que coincidan con {settings.ingest.include_patterns} en {settings.paths.log_dir}"
     with connection() as conn:
-        run = ingest_paths_transactional(
-            conn, registry, paths, settings.ingest.chunk_bytes, rules
-        )
+        run = ingest_paths_transactional(conn, registry, paths, settings.ingest.chunk_bytes, rules)
         return summarize(conn, run)
 
 
@@ -107,7 +105,11 @@ def render(selected: EventFilters) -> None:
         cache.clear_caches()
         st.success(f"eventos rellenados: {format_int(touched)}")
         st.rerun()
-    if recalc_col.button("Reclasificar todo", use_container_width=True, help="--recalc: reescribe la categoría de todos los eventos"):
+    if recalc_col.button(
+        "Reclasificar todo",
+        use_container_width=True,
+        help="--recalc: reescribe la categoría de todos los eventos",
+    ):
         rules = ErrorRules.load(settings.analysis.rules_path)
         with connection() as conn:
             touched = backfill(conn, rules, recalc=True)

@@ -193,8 +193,8 @@ def render(selected: EventFilters) -> None:
             value=int(analysis.window_minutes),
             step=5,
             help="La ventana termina en el último evento del dataset, no en el "
-                 "reloj: un dataset histórico mostraría cero recurrencias si se "
-                 "comparara contra 'ahora'.",
+            "reloj: un dataset histórico mostraría cero recurrencias si se "
+            "comparara contra 'ahora'.",
         )
     with right:
         min_count = st.number_input(
@@ -205,8 +205,9 @@ def render(selected: EventFilters) -> None:
             step=1,
         )
 
-    patterns = cache.recurrence(window_minutes=window, min_count=min_count,
-                                min_severity=selected.min_severity, limit=None)
+    patterns = cache.recurrence(
+        window_minutes=window, min_count=min_count, min_severity=selected.min_severity, limit=None
+    )
     total_in_window = sum(row["count"] for row in patterns)
 
     columns = st.columns(3)
@@ -216,7 +217,7 @@ def render(selected: EventFilters) -> None:
         "Umbral de incidente",
         format_int(analysis.incident_threshold),
         help="Eventos del mismo fingerprint en la ventana a partir de los cuales "
-             "se abre un incidente.",
+        "se abre un incidente.",
     )
 
     st.divider()
@@ -229,14 +230,10 @@ def render(selected: EventFilters) -> None:
                 icon="🚨",
             )
         else:
-            st.success(
-                "Ningún fingerprint supera todavía el umbral de incidente.", icon="✅"
-            )
+            st.success("Ningún fingerprint supera todavía el umbral de incidente.", icon="✅")
         tables.ranking_table(patterns[:DISPLAY_LIMIT], kind="categoría")
         if len(patterns) > DISPLAY_LIMIT:
-            st.caption(
-                f"Mostrando {DISPLAY_LIMIT} de {format_int(len(patterns))} fingerprints."
-            )
+            st.caption(f"Mostrando {DISPLAY_LIMIT} de {format_int(len(patterns))} fingerprints.")
         st.caption(
             "La columna `n` es el número de ocurrencias del mismo fingerprint "
             "(categoría + mensaje normalizado) dentro de la ventana."
