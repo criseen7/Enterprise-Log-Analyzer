@@ -60,7 +60,7 @@ class TempDbTestCase(TestCase):
             ui=base.ui,
         )
 
-    def connect(self) -> "connect":
+    def connect(self) -> connect:
         conn = connect(self.db_path)
         self.addCleanup(conn.close)
         return conn
@@ -78,7 +78,7 @@ class EnvSandbox:
         self._values = {k: v for k, v in values.items() if v is not None}
         self._saved: dict[str, str | None] = {}
 
-    def __enter__(self) -> "EnvSandbox":
+    def __enter__(self) -> EnvSandbox:
         for key, value in self._values.items():
             self._saved[key] = os.environ.get(key)
             os.environ[key] = value

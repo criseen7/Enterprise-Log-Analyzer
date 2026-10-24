@@ -124,9 +124,7 @@ class FetchEventsTests(UiDataTestCase):
     def test_filtra_por_servicio_y_categoria(self):
         self.add(service="orders", category="timeout", message="del servicio")
         self.add(service="billing", category="payment", message="de otro")
-        rows = data.fetch_events(
-            self.conn, data.EventFilters(service="orders", category="timeout")
-        )
+        rows = data.fetch_events(self.conn, data.EventFilters(service="orders", category="timeout"))
         self.assertEqual([row["message"] for row in rows], ["del servicio"])
 
     def test_filtra_por_busqueda(self):
@@ -184,9 +182,7 @@ class IndexUsageTests(UiDataTestCase):
         plan = "\n".join(
             data.explain_plan(
                 self.conn,
-                data.EventFilters(
-                    since="2026-10-05T00:00:00Z", until="2026-10-06T00:00:00Z"
-                ),
+                data.EventFilters(since="2026-10-05T00:00:00Z", until="2026-10-06T00:00:00Z"),
             )
         )
         self.assertNotIn("SCAN e", plan, f"la consulta escanea la tabla:\n{plan}")
@@ -194,9 +190,7 @@ class IndexUsageTests(UiDataTestCase):
 
     def test_el_filtro_por_servicio_usa_su_indice(self):
         plan = "\n".join(
-            data.explain_plan(
-                self.conn, data.EventFilters(service="orders", min_severity=40)
-            )
+            data.explain_plan(self.conn, data.EventFilters(service="orders", min_severity=40))
         )
         self.assertNotIn("SCAN e", plan, f"la consulta escanea la tabla:\n{plan}")
         self.assertIn("USING INDEX idx_events_service_ts", plan, plan)

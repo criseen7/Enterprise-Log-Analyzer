@@ -70,7 +70,9 @@ class FingerprintTests(unittest.TestCase):
 
     def test_no_normaliza_el_caso(self):
         """Decisión: no se unen mensajes con distinto caso (ver ADR-004)."""
-        self.assertNotEqual(normalize_message("Connection refused"), normalize_message("connection refused"))
+        self.assertNotEqual(
+            normalize_message("Connection refused"), normalize_message("connection refused")
+        )
 
     def test_mensaje_vacio_y_nulo_comparten_huella(self):
         self.assertEqual(event_fingerprint(None, ""), event_fingerprint(None, None))
@@ -92,7 +94,9 @@ class FingerprintTests(unittest.TestCase):
                 f"(code={code}, attempt={code})"
             )
             huellas.add(event_fingerprint(rules.category(mensaje), mensaje))
-        self.assertEqual(len(huellas), 1, f"los 100 accesos deberían dar 1 huella, dieron {len(huellas)}")
+        self.assertEqual(
+            len(huellas), 1, f"los 100 accesos deberían dar 1 huella, dieron {len(huellas)}"
+        )
 
 
 class ErrorRulesTests(unittest.TestCase):
@@ -238,20 +242,24 @@ class IngestClassificationTest(AnalysisDbTest):
         self.assertTrue(all(r["fingerprint"] for r in filas), "toda fila debe tener huella")
         categorias = {r["message"]: r["category"] for r in filas}
         self.assertEqual(categorias["timeout de consulta"], "timeout")
-        self.assertEqual(
-            categorias["connection refused to 10.0.0.1"], "connection"
-        )
+        self.assertEqual(categorias["connection refused to 10.0.0.1"], "connection")
         self.assertIsNone(categorias["pedido creado"], "un INFO sin regla no inventa categoría")
 
     def test_dos_ingestas_no_cambian_la_clasificacion(self):
         self.ingest_fixture("analysis/errors_by_hour.log")
-        primero = [tuple(r) for r in self.conn.execute(
-            "SELECT offset, category, fingerprint FROM events ORDER BY offset"
-        )]
+        primero = [
+            tuple(r)
+            for r in self.conn.execute(
+                "SELECT offset, category, fingerprint FROM events ORDER BY offset"
+            )
+        ]
         self.ingest_fixture("analysis/errors_by_hour.log")
-        segundo = [tuple(r) for r in self.conn.execute(
-            "SELECT offset, category, fingerprint FROM events ORDER BY offset"
-        )]
+        segundo = [
+            tuple(r)
+            for r in self.conn.execute(
+                "SELECT offset, category, fingerprint FROM events ORDER BY offset"
+            )
+        ]
         self.assertEqual(primero, segundo)
         self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM events").fetchone()[0], 8)
 
@@ -300,7 +308,9 @@ class MetricsTest(AnalysisDbTest):
         self.assertEqual(categorias["auth"], 1)
         self.assertEqual(categorias["timeout"], 1)
         self.assertEqual(categorias["resource-exhausted"], 1)
-        self.assertNotIn(None, categorias, "los INFO/WARN no deberían entrar con min_severity=ERROR")
+        self.assertNotIn(
+            None, categorias, "los INFO/WARN no deberían entrar con min_severity=ERROR"
+        )
 
 
 class PatternsTest(AnalysisDbTest):
@@ -323,12 +333,8 @@ class PatternsTest(AnalysisDbTest):
 
     def test_la_ventana_no_alcanza_lo_anticuado(self):
         file_id = self.seed_file()
-        self.add_event(
-            file_id, "2026-10-05T10:00:00.000Z", fingerprint="fp-viejo", message="viejo"
-        )
-        self.add_event(
-            file_id, "2026-10-05T12:00:00Z", fingerprint="fp-nuevo", message="nuevo"
-        )
+        self.add_event(file_id, "2026-10-05T10:00:00.000Z", fingerprint="fp-viejo", message="viejo")
+        self.add_event(file_id, "2026-10-05T12:00:00Z", fingerprint="fp-nuevo", message="nuevo")
         filas = recurring_patterns(self.conn, window_minutes=30, min_count=1, min_severity=ERROR)
         self.assertEqual([f.fingerprint for f in filas], ["fp-nuevo"])
 
@@ -359,9 +365,7 @@ class PatternsTest(AnalysisDbTest):
     def test_sin_tope_devuelve_todas_las_huellas(self):
         """El default no puede recortar: 25 huellas sobre el umbral son 25 filas."""
         self._seed_many_fingerprints(25)
-        filas = recurring_patterns(
-            self.conn, window_minutes=15, min_count=2, min_severity=ERROR
-        )
+        filas = recurring_patterns(self.conn, window_minutes=15, min_count=2, min_severity=ERROR)
         self.assertEqual(len(filas), 25)
 
     def test_limit_explicito_si_recorta(self):

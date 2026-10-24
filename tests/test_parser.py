@@ -50,10 +50,18 @@ def build_registry() -> Registry:
 class SeverityTests(unittest.TestCase):
     def test_canonical_names(self):
         for raw, expected in [
-            ("INFO", "INFO"), ("info", "INFO"), ("[WARN]", "WARN"),
-            ("WARNING", "WARN"), ("ERR", "ERROR"), ("SEVERE", "ERROR"),
-            ("CRITICAL", "FATAL"), ("FINE", "DEBUG"), ("CONFIG", "INFO"),
-            ("<ERROR>", "ERROR"), ("", "UNKNOWN"), (None, "UNKNOWN"),
+            ("INFO", "INFO"),
+            ("info", "INFO"),
+            ("[WARN]", "WARN"),
+            ("WARNING", "WARN"),
+            ("ERR", "ERROR"),
+            ("SEVERE", "ERROR"),
+            ("CRITICAL", "FATAL"),
+            ("FINE", "DEBUG"),
+            ("CONFIG", "INFO"),
+            ("<ERROR>", "ERROR"),
+            ("", "UNKNOWN"),
+            (None, "UNKNOWN"),
             ("nonsense", "UNKNOWN"),
         ]:
             with self.subTest(raw=raw):
@@ -220,7 +228,9 @@ class PatternLoadingTests(unittest.TestCase):
         specs = {s.name: s for s in load_patterns(PATTERNS_DIR)}
         self.assertIsNone(specs["json"].default_timezone)
         registry = Registry(specs=list(specs.values()), default_timezone="America/Mexico_City")
-        result = registry.parse_line('{"timestamp":"2026-10-05 08:03:22","level":"INFO","message":"a"}')
+        result = registry.parse_line(
+            '{"timestamp":"2026-10-05 08:03:22","level":"INFO","message":"a"}'
+        )
         self.assertEqual(result.timestamp_utc, "2026-10-05T14:03:22.000Z")
         self.assertEqual(result.source_tz, "America/Mexico_City")
 
@@ -341,8 +351,10 @@ class GoldenFileTests(unittest.TestCase):
         for fixture, expected in self.CASES:
             lines = read_lines(FIXTURES / fixture)
             golden = read_golden(EXPECTED / expected)
-            self.assertEqual(len(lines), len(golden), f"{fixture}:_fixture y golden de distinto tamaño")
-            for number, (line, want) in enumerate(zip(lines, golden), 1):
+            self.assertEqual(
+                len(lines), len(golden), f"{fixture}:_fixture y golden de distinto tamaño"
+            )
+            for number, (line, want) in enumerate(zip(lines, golden, strict=True), 1):
                 got = as_golden(registry.parse_line(line))
                 with self.subTest(fixture=fixture, line=number):
                     for key, value in want.items():
@@ -392,13 +404,19 @@ class TimezoneEquivalenceTests(unittest.TestCase):
 
     def test_naive_and_offset_agree_when_zone_is_declared(self):
         registry = Registry.from_directory(PATTERNS_DIR, default_timezone="America/Mexico_City")
-        naive = registry.parse_line('{"timestamp":"2026-10-05 08:03:22","level":"INFO","message":"a"}')
-        explicit = registry.parse_line('{"timestamp":"2026-10-05T08:03:22-06:00","level":"INFO","message":"a"}')
+        naive = registry.parse_line(
+            '{"timestamp":"2026-10-05 08:03:22","level":"INFO","message":"a"}'
+        )
+        explicit = registry.parse_line(
+            '{"timestamp":"2026-10-05T08:03:22-06:00","level":"INFO","message":"a"}'
+        )
         self.assertEqual(naive.timestamp_utc, explicit.timestamp_utc)
 
     def test_assumed_zone_is_visible_in_source_tz(self):
         registry = build_registry()
-        naive = registry.parse_line('{"timestamp":"2026-10-05 08:03:22","level":"INFO","message":"a"}')
+        naive = registry.parse_line(
+            '{"timestamp":"2026-10-05 08:03:22","level":"INFO","message":"a"}'
+        )
         self.assertEqual(naive.source_tz, "UTC")  # config.yaml: UTC
         explicit = registry.parse_line(
             '{"timestamp":"2026-10-05T08:03:22-06:00","level":"INFO","message":"a"}'
@@ -410,8 +428,18 @@ class TimezoneEquivalenceTests(unittest.TestCase):
 # --- helpers ---
 
 GOLDEN_FIELDS = (
-    "pattern", "parsed_ok", "parse_error", "timestamp_utc", "timestamp_raw",
-    "source_tz", "level_raw", "level_norm", "severity", "service", "logger", "message",
+    "pattern",
+    "parsed_ok",
+    "parse_error",
+    "timestamp_utc",
+    "timestamp_raw",
+    "source_tz",
+    "level_raw",
+    "level_norm",
+    "severity",
+    "service",
+    "logger",
+    "message",
 )
 
 
@@ -425,9 +453,7 @@ def read_lines(path: Path) -> list[str]:
 
 def read_golden(path: Path) -> list[dict]:
     return [
-        json.loads(line)
-        for line in path.read_text(encoding="utf-8").splitlines()
-        if line.strip()
+        json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()
     ]
 
 
