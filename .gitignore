@@ -24,6 +24,12 @@ config.local.yaml
 exports/*
 !exports/.gitkeep
 
+# --- Evals -------------------------------------------------------------
+# El dataset y los resultados crudos se commitean; los logs materializados y
+# la caché de respuestas del modelo no.
+evals/.work/
+evals/.cache/
+
 # --- Tests / tooling ---------------------------------------------------
 .pytest_cache/
 .coverage

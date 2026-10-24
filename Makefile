@@ -4,7 +4,7 @@ PY     ?= $(VENV)/bin/python
 
 .DEFAULT_GOAL := help
 
-.PHONY: help install migrate migrate-status test test-verbose check-db seed demo dashboard clean reset-db fmt lint docker-build docker-up docker-down docker-logs
+.PHONY: help check install migrate migrate-status test test-verbose check-db seed demo dashboard mcp mcp-http tools investigate eval-smoke eval-full clean reset-db fmt lint docker-build docker-up docker-down docker-logs
 
 help: ## Muestra esta ayuda
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -43,21 +43,49 @@ reset-db: ## Borra la base de datos (migraciones y datos)
 	rm -f data/app.db data/app.db-wal data/app.db-shm
 	@echo "Base eliminada. Ejecuta 'make migrate' para recrearla."
 
+mcp: ## Arranca el servidor MCP por stdio (para Claude Desktop)
+	$(PY) -m app.mcp mcp
+
+mcp-http: ## Arranca el servidor MCP por streamable-http en :8000
+	$(PY) -m app.mcp mcp --http --host 0.0.0.0 --port 8000
+
+tools: ## Lista las tools MCP registradas
+	$(PY) -m app.mcp tools
+
+investigate: ## Investiga un síntoma: make investigate SYMPTOM="checkout falla"
+	$(PY) -m app.agent "$(SYMPTOM)" --no-llm
+
+eval-smoke: ## Evals deterministas del subconjunto smoke (sin API key)
+	$(PY) -m evals.dataset.build --verify
+	$(PY) -m evals.run --subset smoke --plan heuristic
+
+eval-full: ## Evals deterministas del dataset completo (sin API key)
+	$(PY) -m evals.dataset.build --verify
+	$(PY) -m evals.run --subset full --plan heuristic
+
+check: ## lint + tipos + tests + goldens
+	$(PY) -m ruff check .
+	$(PY) -m ruff format --check .
+	$(PY) -m mypy
+	$(PY) -m unittest discover -s tests -t . -q
+	$(PY) -m tests.regenerate_golden --check
+
 lint: ## Verifica sintaxis de todos los módulos
 	$(PY) -m compileall -q app tools tests
 
 docker-build: ## Construye la imagen (Fase 6)
 	docker compose build
 
-docker-up: ## Levanta analyzer + dashboard en segundo plano
+docker-up: ## Levanta analyzer + dashboard + MCP en segundo plano
 	docker compose up -d
 
 docker-down: ## Detiene los servicios (los volúmenes de data/exports persisten)
 	docker compose down
 
-docker-logs: ## Sigue los logs de ambos servicios
+docker-logs: ## Sigue los logs de los servicios
 	docker compose logs -f
 
 clean: ## Elimina cachés
 	find . -type d -name __pycache__ -not -path './.git/*' -exec rm -rf {} + 2>/dev/null || true
 	rm -rf .pytest_cache .ruff_cache .mypy_cache htmlcov .coverage
+	rm -rf evals/.work evals/.cache

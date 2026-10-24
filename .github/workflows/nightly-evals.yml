@@ -1,0 +1,70 @@
+name: Nightly evals
+
+on:
+  schedule:
+    - cron: "17 4 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: nightly-evals
+  cancel-in-progress: false
+
+env:
+  ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+
+jobs:
+  full:
+    name: full dataset (deterministic)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: pip
+      - run: pip install -r requirements.txt -r requirements-dev.txt
+      - name: dataset reproducible
+        run: python -m evals.dataset.build --verify
+      - name: A0 · engine + deterministic synthesis
+        run: |
+          python -m evals.run --subset full --plan heuristic --tag nightly-a0 \
+            --fail-under root_cause_accuracy=0.8 \
+            --fail-under hallucination_rate=0.05
+      - name: A1 · no compare_windows
+        # Se ejecuta sin umbral: la ablación debe poder fallar sin romper el job.
+        run: python -m evals.run --subset full --plan heuristic --ablation A1 --tag nightly-a1
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: evals-deterministic
+          path: evals/results/nightly-*.json
+
+  with-model:
+    name: full dataset (model)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: pip
+      - run: pip install -r requirements.txt -r requirements-dev.txt
+      - name: run with model (skipped without key)
+        if: env.ANTHROPIC_API_KEY != ''
+        run: |
+          python -m evals.run --subset full --tag nightly-model \
+            --fail-under root_cause_accuracy=0.6 \
+            --fail-under hallucination_rate=0.15
+      - name: explain skip
+        if: env.ANTHROPIC_API_KEY == ''
+        run: |
+          echo "::notice::SKIPPED: ANTHROPIC_API_KEY is not configured."
+          echo "The deterministic job above still ran and is the real daily signal."
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: evals-model
+          path: evals/results/nightly-model.json
+          if-no-files-found: ignore
