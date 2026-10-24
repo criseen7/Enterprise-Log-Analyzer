@@ -19,7 +19,7 @@ import sys
 from pathlib import Path
 
 from app.alerts.detection import evaluate_incidents
-from app.alerts.incidents import status_label, list_incidents
+from app.alerts.incidents import list_incidents, status_label
 from app.config import load_settings
 from app.db.connection import connect
 from app.db.migrations import migrate
@@ -43,7 +43,9 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="no recalcular la ventana; sólo leer lo ya persistido",
     )
-    parser.add_argument("--window", type=int, default=None, metavar="MIN", help="ventana en minutos")
+    parser.add_argument(
+        "--window", type=int, default=None, metavar="MIN", help="ventana en minutos"
+    )
     parser.add_argument(
         "--export",
         choices=["csv", "html"],
@@ -84,9 +86,7 @@ def main(argv: list[str] | None = None) -> int:
             )
 
         if args.export == "csv":
-            sys.stdout.write(
-                export_incidents_csv(conn, status=args.status).decode("utf-8-sig")
-            )
+            sys.stdout.write(export_incidents_csv(conn, status=args.status).decode("utf-8-sig"))
             return 0
         if args.export == "html":
             sys.stdout.write(export_incidents_html(conn, status=args.status))
