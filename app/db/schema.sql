@@ -117,3 +117,61 @@ CREATE TABLE IF NOT EXISTS ingest_runs (
 );
 
 CREATE INDEX IF NOT EXISTS idx_ingest_runs_started ON ingest_runs (started_at DESC);
+
+-- Acciones del agente pendientes de aprobación humana (HITL).
+--
+-- El servidor MCP registra aquí la mutación que un agente quiere hacer; el
+-- operador la aprueba desde la CLI; sólo entonces se emite el `confirm_token`
+-- que autoriza la ejecución. La tabla es la memoria compartida entre los dos
+-- procesos y el registro de auditoría de qué se pidió, quién lo aprobó y
+-- cuándo se ejecutó.
+--
+-- `params` y `result` son JSON: la acción es opaca para la base y sólo la
+-- capa MCP sabe interpretarlos.
+CREATE TABLE IF NOT EXISTS agent_actions (
+    id            TEXT    PRIMARY KEY,
+    tool          TEXT    NOT NULL,
+    params        TEXT    NOT NULL,
+    -- PENDING | APPROVED | EXECUTED | REJECTED | EXPIRED
+    status        TEXT    NOT NULL DEFAULT 'PENDING',
+    -- HMAC-SHA256 sobre la acción. Su presencia prueba que hubo aprobación.
+    confirm_token TEXT,
+    created_at    TEXT    NOT NULL,
+    expires_at    TEXT    NOT NULL,
+    approved_at   TEXT,
+    approved_by   TEXT,
+    executed_at   TEXT,
+    result        TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_agent_actions_status  ON agent_actions (status, created_at);
+CREATE INDEX IF NOT EXISTS idx_agent_actions_expires ON agent_actions (expires_at);
+
+-- Corridas del agente (v6).
+--
+-- La traza JSONL guarda el detalle; esta tabla lo que el dashboard necesita
+-- listar y agregar sin abrir archivos. `status` distingue una corrida que
+-- terminó de una que se detuvo por datos no fiables o por esperar aprobación.
+CREATE TABLE IF NOT EXISTS agent_runs (
+    run_id                 TEXT    PRIMARY KEY,
+    symptom                TEXT    NOT NULL,
+    restatement            TEXT,
+    -- RUNNING | OK | FAILED | BLOCKED | NEEDS_APPROVAL
+    status                 TEXT    NOT NULL DEFAULT 'RUNNING',
+    started_at             TEXT    NOT NULL,
+    finished_at            TEXT,
+    model                  TEXT,
+    prompt_version         TEXT,
+    plan_json              TEXT,
+    root_cause_fingerprint TEXT,
+    confidence             TEXT,
+    step_count             INTEGER,
+    evidence_count         INTEGER,
+    tokens_in              INTEGER NOT NULL DEFAULT 0,
+    tokens_out             INTEGER NOT NULL DEFAULT 0,
+    cost_usd               REAL    NOT NULL DEFAULT 0,
+    trace_path             TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_agent_runs_started ON agent_runs (started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_agent_runs_status  ON agent_runs (status, started_at DESC);
