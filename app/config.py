@@ -51,9 +51,7 @@ class IngestConfig:
         default=("*.log", "*.log.*"),
         metadata={"env": "ELA_INCLUDE_PATTERNS"},
     )
-    poll_interval_seconds: float = field(
-        default=5.0, metadata={"env": "ELA_POLL_INTERVAL_SECONDS"}
-    )
+    poll_interval_seconds: float = field(default=5.0, metadata={"env": "ELA_POLL_INTERVAL_SECONDS"})
     debounce_seconds: float = field(default=2.0, metadata={"env": "ELA_DEBOUNCE_SECONDS"})
     chunk_bytes: int = field(default=1_048_576, metadata={"env": "ELA_CHUNK_BYTES"})
     default_timezone: str = field(default="UTC", metadata={"env": "ELA_DEFAULT_TIMEZONE"})
@@ -77,9 +75,7 @@ class AnalysisConfig:
     rules_path: Path = field(
         default=Path("app/analysis/error_rules.yaml"), metadata={"env": "ELA_ERROR_RULES_PATH"}
     )
-    min_incident_severity: int = field(
-        default=40, metadata={"env": "ELA_MIN_INCIDENT_SEVERITY"}
-    )
+    min_incident_severity: int = field(default=40, metadata={"env": "ELA_MIN_INCIDENT_SEVERITY"})
     window_minutes: int = field(default=15, metadata={"env": "ELA_WINDOW_MINUTES"})
     incident_threshold: int = field(default=50, metadata={"env": "ELA_INCIDENT_THRESHOLD"})
     cooldown_minutes: int = field(default=10, metadata={"env": "ELA_COOLDOWN_MINUTES"})
@@ -89,9 +85,7 @@ class AnalysisConfig:
 
 @dataclass(frozen=True)
 class UIConfig:
-    page_title: str = field(
-        default="Enterprise Log Analyzer", metadata={"env": "ELA_PAGE_TITLE"}
-    )
+    page_title: str = field(default="Enterprise Log Analyzer", metadata={"env": "ELA_PAGE_TITLE"})
     page_icon: str = field(default="📊", metadata={"env": "ELA_PAGE_ICON"})
     cache_ttl_seconds: int = field(default=30, metadata={"env": "ELA_CACHE_TTL_SECONDS"})
     default_page_size: int = field(default=100, metadata={"env": "ELA_DEFAULT_PAGE_SIZE"})
@@ -115,7 +109,9 @@ class Settings:
             return []
         seen: dict[Path, None] = {}
         for pattern in self.ingest.include_patterns:
-            seen.update({p.resolve(): None for p in self.paths.log_dir.glob(pattern) if p.is_file()})
+            seen.update(
+                {p.resolve(): None for p in self.paths.log_dir.glob(pattern) if p.is_file()}
+            )
         return sorted(seen)
 
 
@@ -228,7 +224,7 @@ def _build_section(cls: type, data: dict[str, Any], root: Path):
     _apply_env(cls, instance)
 
     # Las rutas son relativas a la raíz del proyecto y deben quedar absolutas.
-    for name, f in known.items():
+    for name in known:
         value = getattr(instance, name)
         if isinstance(value, Path) and not value.is_absolute():
             object.__setattr__(instance, name, (root / value).resolve())
@@ -288,7 +284,9 @@ def _validate(settings: Settings) -> None:
 
         ZoneInfo(settings.ingest.default_timezone)
     except Exception as exc:  # noqa: BLE001 - tz puede fallar por muchas razones
-        problems.append(f"ingest.default_timezone inválido: {settings.ingest.default_timezone!r} ({exc})")
+        problems.append(
+            f"ingest.default_timezone inválido: {settings.ingest.default_timezone!r} ({exc})"
+        )
 
     if not settings.analysis.rules_path.is_file():
         problems.append(
