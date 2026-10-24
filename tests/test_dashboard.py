@@ -21,7 +21,7 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from tests.helpers import EnvSandbox, REPO_ROOT
+from tests.helpers import REPO_ROOT, EnvSandbox
 
 HAS_STREAMLIT = importlib.util.find_spec("streamlit") is not None
 
@@ -34,10 +34,7 @@ def setUpModule() -> None:
     del primer test. Importarlas aquí las saca del presupuesto del test.
     """
     if HAS_STREAMLIT:
-        import pandas
-        import plotly
-        import plotly.graph_objects
-        import streamlit
+        pass
 
 
 SAMPLE_LOG = "".join(
@@ -74,9 +71,7 @@ class DashboardSmokeTests(unittest.TestCase):
         self.log_dir.mkdir()
         self.db_path = root / "data" / "ui.db"
 
-        self._sandbox = EnvSandbox(
-            ELA_DB_PATH=str(self.db_path), ELA_LOG_DIR=str(self.log_dir)
-        )
+        self._sandbox = EnvSandbox(ELA_DB_PATH=str(self.db_path), ELA_LOG_DIR=str(self.log_dir))
         self._sandbox.__enter__()
         self.addCleanup(self._sandbox.__exit__, None, None, None)
 
@@ -120,9 +115,7 @@ class DashboardSmokeTests(unittest.TestCase):
             return conn.execute("SELECT COUNT(*) FROM events").fetchone()[0]
 
     def assert_no_exception(self, at) -> None:
-        self.assertFalse(
-            at.exception, [f"{exc.type}: {exc.value}" for exc in at.exception]
-        )
+        self.assertFalse(at.exception, [f"{exc.type}: {exc.value}" for exc in at.exception])
 
     # -- tests --------------------------------------------------------------
 
@@ -191,6 +184,7 @@ class DashboardSmokeTests(unittest.TestCase):
 
     def test_empty_state_de_events_cuando_no_hay_datos(self):
         from streamlit.testing.v1 import AppTest
+
         from app.db.migrations import migrate
 
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -230,6 +224,7 @@ class DashboardSmokeTests(unittest.TestCase):
 
     def test_incidents_muestra_banner_y_export_cuando_no_hay_nada(self):
         from streamlit.testing.v1 import AppTest
+
         from app.db.migrations import migrate
 
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -248,6 +243,7 @@ class DashboardSmokeTests(unittest.TestCase):
     def test_incidents_cuenta_mas_de_veinte_fingerprints(self):
         """El contador de la UI no puede quedarse en 20: cuenta la ventana entera."""
         from streamlit.testing.v1 import AppTest
+
         from app.db.connection import connection
         from app.db.migrations import migrate
 

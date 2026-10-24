@@ -3,15 +3,16 @@
 # contención de escritura de SQLite por diseño y permite reiniciar el dashboard
 # sin interrumpir la ingesta.
 #
-# Los tres montajes tienen un propósito cada uno:
+# Los montajes tienen un propósito cada uno:
 #   - logs    -> bind de sólo lectura: los logs reales nunca se escriben.
 #   - data    -> volumen con nombre: la DB sobrevive a `down` y `build`.
 #   - exports -> volumen con nombre: los reportes sobreviven igual que la DB.
+#   - traces  -> volumen con nombre: las trazas del agente se auditan después.
 
 services:
   analyzer:
     build: .
-    image: enterprise-log-analyzer:local
+    image: loglens:local
     command: ["python", "-m", "app.ingest", "--watch"]
     restart: unless-stopped
     environment:
@@ -19,10 +20,12 @@ services:
       ELA_LOG_DIR: /logs
       ELA_DB_PATH: /data/app.db
       ELA_EXPORT_DIR: /exports
+      LOGLENS_TRACES_DIR: /traces
     volumes:
       - ./logs:/logs:ro
       - ela-data:/data
       - ela-exports:/exports
+      - loglens-traces:/traces
     healthcheck:
       # `--status` migra y luego lee: devuelve 0 en cuanto el esquema existe,
       # así que marca "listo" justo después de crear/verificar la base.
@@ -34,7 +37,7 @@ services:
 
   dashboard:
     build: .
-    image: enterprise-log-analyzer:local
+    image: loglens:local
     command: ["streamlit", "run", "app/ui/app.py"]
     restart: unless-stopped
     depends_on:
@@ -65,6 +68,43 @@ services:
       retries: 5
       start_period: 20s
 
+  # El servidor MCP es otro proceso, no otro contenedor de datos: lee la misma
+  # DB (WAL permite lectores concurrentes) y escribe sólo `agent_runs` y
+  # `agent_actions`. Exponerlo por HTTP permite conectarlo desde Claude Desktop
+  # o desde un cliente remoto sin compartir el sistema de archivos.
+  mcp:
+    build: .
+    image: loglens:local
+    command: ["python", "-m", "app.mcp", "mcp", "--http", "--host", "0.0.0.0", "--port", "8000"]
+    restart: unless-stopped
+    depends_on:
+      analyzer:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    environment:
+      ELA_PROJECT_ROOT: /app
+      ELA_LOG_DIR: /logs
+      ELA_DB_PATH: /data/app.db
+      ELA_EXPORT_DIR: /exports
+      LOGLENS_TRACES_DIR: /traces
+    volumes:
+      - ./logs:/logs:ro
+      - ela-data:/data
+      - ela-exports:/exports
+      - loglens-traces:/traces
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import socket; socket.create_connection(('127.0.0.1', 8000), 3).close()"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
 volumes:
   ela-data:
   ela-exports:
+  loglens-traces:

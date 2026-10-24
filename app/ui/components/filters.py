@@ -84,13 +84,13 @@ def sidebar_filters() -> data.EventFilters:
                 # `until` es exclusivo: para incluir el día final hay que llegar
                 # al día siguiente a las 00:00.
                 since = _to_iso(datetime.combine(start, datetime.min.time(), tzinfo=UTC))
-                until = _to_iso(datetime.combine(end, datetime.min.time(), tzinfo=UTC) + timedelta(days=1))
+                until = _to_iso(
+                    datetime.combine(end, datetime.min.time(), tzinfo=UTC) + timedelta(days=1)
+                )
 
         level = st.selectbox("Severidad mínima", list(MIN_SEVERITIES), index=1)
         service = st.selectbox("Servicio", [ANY, *options["services"], data.BLANK_SERVICE])
-        category = st.selectbox(
-            "Categoría", [ANY, *options["categories"], data.BLANK_CATEGORY]
-        )
+        category = st.selectbox("Categoría", [ANY, *options["categories"], data.BLANK_CATEGORY])
         search = st.text_input("Buscar en el mensaje", placeholder="texto libre…")
         st.caption(
             f"{format_int(len(options['services']))} servicios · "

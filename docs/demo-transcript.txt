@@ -1,0 +1,26 @@
+$ loglens investigate "checkout is failing after the deploy" --no-llm
+LogLens — checkout is failing after the deploy
+run      : run-20261023T174810-b96b98b0
+estado   : OK
+confianza: low
+causa    : pago rechazado por el banco
+huella   : dacc3ca4b4d6710f
+servicios: billing-api, gateway, order-api, worker
+
+Afirmaciones:
+  · (fact) La huella dacc3ca4b4d6710f concentra 33 errores (36.7% del total de la ventana) [fp:dacc3ca4b4d6710f]
+  · (fact) El volumen es «new» frente al baseline (ratio None, z-score None) [cmp:dacc3ca4b4d6710f]
+  · (fact) El fallo afecta a 4 servicio(s) y hay evidencia de cascada [blast:dacc3ca4b4d6710f, svc:dacc3ca4b4d6710f:billing-api, svc:dacc3ca4b4d6710f:gateway, svc:dacc3ca4b4d6710f:order-api, svc:dacc3ca4b4d6710f:worker]
+
+Siguiente paso:
+  → revisar el servicio que originó la huella dacc3ca4b4d6710f
+  → vigilar la huella en la próxima ventana
+
+Huecos de evidencia:
+  ! el log no identifica cuál de los servicios falló primero en origen
+  ! la confianza del dataset es medium
+
+Citas: 3 válidas, 0 inventadas (eliminadas), 0 sin cita
+
+Coste   : $0.000000 (0 in / 0 out, 1725 ms)
+Traza   : traces/run-20261023T174810-b96b98b0.jsonl

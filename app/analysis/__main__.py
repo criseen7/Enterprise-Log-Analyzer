@@ -15,7 +15,6 @@ dashboard, y es lo que hace un operador cuando el dashboard no cuadra.
 from __future__ import annotations
 
 import argparse
-import sys
 from pathlib import Path
 
 from app.analysis.anomalies import anomalies
@@ -90,8 +89,10 @@ def _print_anomalies(conn, config) -> None:
         min_samples=config.analysis.anomaly_min_samples,
     )
     if not found:
-        print(f"sin picos: z >= {config.analysis.anomaly_zscore} con >= "
-              f"{config.analysis.anomaly_min_samples} eventos/hora")
+        print(
+            f"sin picos: z >= {config.analysis.anomaly_zscore} con >= "
+            f"{config.analysis.anomaly_min_samples} eventos/hora"
+        )
         return
     for item in found:
         z = "inf" if item.is_infinite else f"{item.zscore:.2f}"
@@ -133,7 +134,13 @@ def main(argv: list[str] | None = None) -> int:
             touched = backfill(conn, rules, recalc=args.recalc)
             modo = "reclasificados" if args.recalc else "rellenados"
             print(f"eventos {modo}: {touched}")
-            if not args.overview and not args.top and not args.hourly and not args.anomalies and not args.patterns:
+            if (
+                not args.overview
+                and not args.top
+                and not args.hourly
+                and not args.anomalies
+                and not args.patterns
+            ):
                 return 0
 
         if not any([args.overview, args.top, args.hourly, args.anomalies, args.patterns]):

@@ -3,3 +3,5 @@
 # para que sean ejecutables sin instalar nada: `python -m unittest discover tests`.
 
 pytest==8.3.4
+ruff==0.17.2
+mypy==2.4.0

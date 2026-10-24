@@ -29,8 +29,18 @@ PAIRS = [
     ("json/weblogic_flat.json", "json/weblogic_flat.jsonl"),
 ]
 
-# Importado desde el test para que el formato no pueda divergir del que compara.
-from tests.test_parser import GOLDEN_FIELDS, as_golden  # noqa: E402
+# Importados desde los tests para que el formato no pueda divergir del que
+# compara: si el test serializa de una forma y el regenerador de otra, el
+# `--check` de CI fallaría siempre.
+from tests.analysis_golden import render_blast, render_compare  # noqa: E402
+from tests.test_parser import as_golden  # noqa: E402
+
+# Golden del motor extendido: no son JSONL de parser sino salidas completas de
+# una función, así que se comparan como un todo.
+ANALYSIS = [
+    ("compare_windows.json", render_compare),
+    ("blast_radius.json", render_blast),
+]
 
 
 def render(fixture: Path, registry: Registry) -> str:
@@ -43,27 +53,33 @@ def render(fixture: Path, registry: Registry) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="tests.regenerate_golden")
-    parser.add_argument("--check", action="store_true", help="No escribe: sale con 1 si hay diferencias")
+    parser.add_argument(
+        "--check", action="store_true", help="No escribe: sale con 1 si hay diferencias"
+    )
     args = parser.parse_args(argv)
 
     registry = Registry.from_directory(PATTERNS_DIR)
     stale: list[str] = []
 
+    jobs: list[tuple[Path, str]] = []
     for fixture_rel, expected_rel in PAIRS:
-        fixture = FIXTURES / fixture_rel
-        target = EXPECTED / expected_rel
-        rendered = render(fixture, registry)
+        jobs.append((EXPECTED / expected_rel, render(FIXTURES / fixture_rel, registry)))
+    for name, renderer in ANALYSIS:
+        jobs.append((EXPECTED / "analysis" / name, renderer()))
+
+    for target, rendered in jobs:
+        label = target.relative_to(EXPECTED).as_posix()
 
         if args.check:
             current = target.read_text(encoding="utf-8") if target.is_file() else ""
             if current != rendered:
-                stale.append(expected_rel)
+                stale.append(label)
             continue
 
         target.parent.mkdir(parents=True, exist_ok=True)
         changed = (not target.is_file()) or target.read_text(encoding="utf-8") != rendered
         target.write_text(rendered, encoding="utf-8")
-        print(f"{'actualizado' if changed else 'sin cambios'}: {expected_rel}")
+        print(f"{'actualizado' if changed else 'sin cambios'}: {label}")
 
     if stale:
         print("\ngolden files desactualizados:", file=sys.stderr)

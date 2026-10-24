@@ -202,7 +202,10 @@ def resolve_log_file(conn: sqlite3.Connection, path: Path) -> FileState | None:
     # lo que hay en disco ahora, aunque su nombre sea el mismo.
     _supersede(conn, str(resolved), latest["id"], stamp)
     return FileState(
-        latest["id"], latest["last_offset"], latest["generation"], "renamed" if renamed else "resumed"
+        latest["id"],
+        latest["last_offset"],
+        latest["generation"],
+        "renamed" if renamed else "resumed",
     )
 
 
@@ -292,7 +295,9 @@ def last_offset(conn: sqlite3.Connection, file_id: int) -> int:
 
 
 def start_run(conn: sqlite3.Connection) -> int:
-    cursor = conn.execute("INSERT INTO ingest_runs (started_at, status) VALUES (?, 'RUNNING')", (now_iso(),))
+    cursor = conn.execute(
+        "INSERT INTO ingest_runs (started_at, status) VALUES (?, 'RUNNING')", (now_iso(),)
+    )
     return int(cursor.lastrowid)
 
 
@@ -314,21 +319,25 @@ def finish_run(
         "events_inserted = ?, events_skipped = ?, events_unparsed = ?, duration_ms = ?, "
         "status = ?, error = ? WHERE id = ?",
         (
-            now_iso(), files_processed, lines_read, events_inserted, events_skipped,
-            events_unparsed, duration_ms, status, error, run_id,
+            now_iso(),
+            files_processed,
+            lines_read,
+            events_inserted,
+            events_skipped,
+            events_unparsed,
+            duration_ms,
+            status,
+            error,
+            run_id,
         ),
     )
 
 
 def recent_runs(conn: sqlite3.Connection, limit: int = 10) -> list[sqlite3.Row]:
-    return list(
-        conn.execute("SELECT * FROM ingest_runs ORDER BY id DESC LIMIT ?", (limit,))
-    )
+    return list(conn.execute("SELECT * FROM ingest_runs ORDER BY id DESC LIMIT ?", (limit,)))
 
 
 def parse_coverage(conn: sqlite3.Connection) -> tuple[int, int]:
     """`(total, ok)`. La cobertura del dashboard sale de aquí, no de Python."""
-    row = conn.execute(
-        "SELECT COUNT(*), COALESCE(SUM(parsed_ok), 0) FROM events"
-    ).fetchone()
+    row = conn.execute("SELECT COUNT(*), COALESCE(SUM(parsed_ok), 0) FROM events").fetchone()
     return int(row[0]), int(row[1])

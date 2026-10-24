@@ -99,7 +99,9 @@ class EventFilters:
         if self.unparsed_only:
             clauses.append(f"{alias}.parsed_ok = 0")
         if self.search:
-            clauses.append(f"({alias}.message LIKE ? ESCAPE '\\' OR {alias}.raw_line LIKE ? ESCAPE '\\')")
+            clauses.append(
+                f"({alias}.message LIKE ? ESCAPE '\\' OR {alias}.raw_line LIKE ? ESCAPE '\\')"
+            )
             params.extend((_like(self.search), _like(self.search)))
 
         text = (" WHERE " + " AND ".join(clauses)) if clauses else ""

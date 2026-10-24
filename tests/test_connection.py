@@ -105,9 +105,11 @@ class ConcurrencyTests(TempDbTestCase):
             finally:
                 local.close()
 
-        threads = [threading.Thread(target=writer, args=(1,)),
-                   threading.Thread(target=writer, args=(2,)),
-                   threading.Thread(target=reader)]
+        threads = [
+            threading.Thread(target=writer, args=(1,)),
+            threading.Thread(target=writer, args=(2,)),
+            threading.Thread(target=reader),
+        ]
         for t in threads:
             t.start()
         for t in threads:
@@ -141,9 +143,7 @@ class ConcurrencyTests(TempDbTestCase):
         elapsed = time.monotonic() - started
 
         self.assertLess(elapsed, 0.4, "el COMMIT del escritor esperó a un lector abierto")
-        self.assertEqual(
-            self.connect().execute("SELECT COUNT(*) FROM events").fetchone()[0], 1
-        )
+        self.assertEqual(self.connect().execute("SELECT COUNT(*) FROM events").fetchone()[0], 1)
         reader.execute("COMMIT")
 
     def test_delete_journal_would_block_the_writer(self):

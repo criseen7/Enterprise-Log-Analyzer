@@ -32,9 +32,9 @@ from app.ingest.ingestor import discover, ingest_paths_transactional, summarize
 from app.parser.registry import Registry
 from app.ui import cache
 from app.ui.components import filters
+from app.ui.theme import apply_theme, format_int
 from app.ui.views import events, incidents, overview
 from app.ui.views import settings as settings_page
-from app.ui.theme import apply_theme, format_int
 
 
 def _bootstrap(settings: Settings) -> None:

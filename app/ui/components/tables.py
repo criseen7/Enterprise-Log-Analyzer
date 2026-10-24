@@ -38,8 +38,7 @@ def events_table(rows: list[dict]) -> None:
             "mensaje": [shorten(row["message"] or row["raw_line"], 140) for row in rows],
             "huella": [row["fingerprint"] or _DASH for row in rows],
             "origen": [
-                Path(row["source_path"]).name if row["source_path"] else _DASH
-                for row in rows
+                Path(row["source_path"]).name if row["source_path"] else _DASH for row in rows
             ],
         }
     )
@@ -150,7 +149,9 @@ def runs_table(rows: list[dict]) -> None:
         frame,
         use_container_width=True,
         hide_index=True,
-        column_config={"inicio": st.column_config.DatetimeColumn("inicio", format="MM-DD HH:mm:ss")},
+        column_config={
+            "inicio": st.column_config.DatetimeColumn("inicio", format="MM-DD HH:mm:ss")
+        },
     )
 
 

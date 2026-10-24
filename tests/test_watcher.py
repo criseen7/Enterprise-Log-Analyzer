@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import dataclasses
 import unittest
-from pathlib import Path
 
 from app.config import IngestConfig
 from app.ingest.watcher import _known_files, _match_known
@@ -46,9 +45,7 @@ class KnownFilesTests(TempDbTestCase):
 class DirectoryPatternTests(TempDbTestCase):
     def _settings_with(self, patterns: tuple[str, ...]):
         base = self.settings()
-        ingest: IngestConfig = dataclasses.replace(
-            base.ingest, include_patterns=patterns
-        )
+        ingest: IngestConfig = dataclasses.replace(base.ingest, include_patterns=patterns)
         return dataclasses.replace(base, ingest=ingest)
 
     def test_top_level_file_not_matched_by_directory_pattern(self) -> None:

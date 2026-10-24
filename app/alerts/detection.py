@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import sqlite3
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from app.analysis.patterns import RecurringPattern, recurring_patterns
 from app.config import AnalysisConfig, get_settings
@@ -32,13 +32,13 @@ def _parse_iso(ts: str) -> datetime:
     # entiende las dos formas; el fallback cubre cadenas sin sufijo de zona.
     moment = datetime.fromisoformat(ts.replace("Z", "+00:00"))
     if moment.tzinfo is None:
-        return moment.replace(tzinfo=timezone.utc)
+        return moment.replace(tzinfo=UTC)
     return moment
 
 
 def _format_iso(dt: datetime) -> str:
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
+        dt = dt.replace(tzinfo=UTC)
     return to_utc_iso(dt)
 
 
@@ -76,7 +76,9 @@ def _should_notify(now: datetime, notified_at: str | None, cooldown_minutes: int
     return False
 
 
-def _upsert_incident(conn: sqlite3.Connection, c: IncidentCandidate, now: datetime, cooldown_minutes: int) -> dict:
+def _upsert_incident(
+    conn: sqlite3.Connection, c: IncidentCandidate, now: datetime, cooldown_minutes: int
+) -> dict:
     """Crea o actualiza un incidente por fingerprint.
 
     Reapertura automática: si el incidente estaba `RESOLVED` y vuelve a
@@ -119,9 +121,7 @@ def _upsert_incident(conn: sqlite3.Connection, c: IncidentCandidate, now: dateti
         (c.fingerprint,),
     ).fetchone()
     if row is None:
-        raise RuntimeError(
-            f"incidente no insertado ni encontrado: {c.fingerprint!r}"
-        )
+        raise RuntimeError(f"incidente no insertado ni encontrado: {c.fingerprint!r}")
 
     inc_id, status_cur, notified_at_cur = row["id"], row["status"], row["notified_at"]
     new_status = status_cur
@@ -213,7 +213,7 @@ def evaluate_incidents(
         ),
     )
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     results = []
     with transaction(conn):
         for c in candidates:

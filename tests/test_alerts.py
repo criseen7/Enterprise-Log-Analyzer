@@ -2,8 +2,6 @@ import io
 import unittest
 from contextlib import redirect_stdout
 
-from tests.helpers import EnvSandbox
-from tests.test_ui_data import UiDataTestCase
 from app.alerts import evaluate_incidents
 from app.alerts.incidents import (
     VALID_STATUSES,
@@ -15,12 +13,12 @@ from app.alerts.incidents import (
     status_label,
 )
 from app.reports import export_incidents_csv, export_incidents_html
+from tests.helpers import EnvSandbox
+from tests.test_ui_data import UiDataTestCase
 
 
 class AlertsTests(UiDataTestCase):
-    def _insert(
-        self, offset: int, fingerprint: str, ts: str, *, severity: int = 50
-    ) -> None:
+    def _insert(self, offset: int, fingerprint: str, ts: str, *, severity: int = 50) -> None:
         self.conn.execute(
             "INSERT INTO events ("
             "file_id, offset, fingerprint, category, timestamp_utc, timestamp_raw, "
@@ -112,9 +110,7 @@ class AlertsTests(UiDataTestCase):
         self.conn.commit()
         result = evaluate_incidents(self.conn, window_minutes=120, min_count=50)
         self.assertEqual(result["evaluated"], 0)
-        self.assertEqual(
-            self.conn.execute("SELECT COUNT(*) FROM incidents").fetchone()[0], 0
-        )
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM incidents").fetchone()[0], 0)
 
     def test_override_min_count_cero_se_respeta(self):
         """`min_count=0` no debe caer al umbral de config (bug M16 del `or`)."""
@@ -141,9 +137,9 @@ class AlertsTests(UiDataTestCase):
             "severidad 10 < 40 por defecto: no es candidato",
         )
         self.assertEqual(
-            evaluate_incidents(
-                self.conn, window_minutes=120, min_count=1, min_severity=0
-            )["evaluated"],
+            evaluate_incidents(self.conn, window_minutes=120, min_count=1, min_severity=0)[
+                "evaluated"
+            ],
             1,
             "min_severity=0 debe incluir la severidad 10",
         )
@@ -234,9 +230,7 @@ class IncidentManagementTests(UiDataTestCase):
 
     def test_status_by_fingerprint_and_invalid_status(self):
         self._open_incident("fp-by-fp")
-        self.assertTrue(
-            set_incident_status_by_fingerprint(self.conn, "fp-by-fp", "ACKNOWLEDGED")
-        )
+        self.assertTrue(set_incident_status_by_fingerprint(self.conn, "fp-by-fp", "ACKNOWLEDGED"))
         self.assertFalse(set_incident_status_by_fingerprint(self.conn, "nope", "OPEN"))
         with self.assertRaises(ValueError):
             set_incident_status(self.conn, 1, "BOGUS")

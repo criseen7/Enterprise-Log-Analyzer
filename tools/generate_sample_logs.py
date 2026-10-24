@@ -20,7 +20,7 @@ import argparse
 import json
 import random
 import shutil
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 SERVICES = ["order-api", "billing-api", "gateway", "worker"]
@@ -75,7 +75,7 @@ def apache_line(now: datetime) -> str:
     remote = f"10.0.{random.randint(0, 3)}.{random.randint(2, 254)}"
     zone = now.astimezone()
     return (
-        f'{remote} - - [{zone:%d/%b/%Y:%H:%M:%S %z}] '
+        f"{remote} - - [{zone:%d/%b/%Y:%H:%M:%S %z}] "
         f'"GET {random.choice(APACHE_PATHS)} HTTP/1.1" {status} {random.randint(120, 9000)} '
         f'"https://app.example.com/" "Mozilla/5.0 (X11; Linux x86_64)"'
     )
@@ -119,11 +119,11 @@ def weblogic_line(now: datetime) -> str:
 def build(out: Path, lines: int, seed: int) -> list[Path]:
     random.seed(seed)
     out.mkdir(parents=True, exist_ok=True)
-    start = datetime.now(timezone.utc) - timedelta(minutes=lines // 40)
+    start = datetime.now(UTC) - timedelta(minutes=lines // 40)
 
     handle = (out / "app.log").open("w", encoding="utf-8")
 
-    for i, moment in enumerate(_timestamps(start, lines)):
+    for moment in _timestamps(start, lines):
         kind = random.choices(["apache", "json", "weblogic"], [40, 45, 15])[0]
         if kind == "apache":
             handle.write(apache_line(moment) + "\n")
@@ -153,7 +153,7 @@ def build(out: Path, lines: int, seed: int) -> list[Path]:
 
     nuevo = out / "app.log"
     with nuevo.open("w", encoding="utf-8") as fh:
-        for moment in _timestamps(datetime.now(timezone.utc), 40):
+        for moment in _timestamps(datetime.now(UTC), 40):
             fh.write(json_line(moment) + "\n")
 
     return [nuevo, rotado]

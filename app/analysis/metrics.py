@@ -245,7 +245,9 @@ def heatmap_day_hour(
         """,
         [min_severity, *params],
     ).fetchall()
-    return [DayHour(day=int(row["day"]), hour=int(row["hour"]), count=int(row["n"])) for row in rows]
+    return [
+        DayHour(day=int(row["day"]), hour=int(row["hour"]), count=int(row["n"])) for row in rows
+    ]
 
 
 @dataclass(frozen=True)

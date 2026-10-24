@@ -1,0 +1,134 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "feat/**"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Un analyzer de logs tiene que ser reproducible: si el locale cambia el
+  # formato de fecha o el orden de los mensajes, los golden snapshots fallan en
+  # una máquina y pasan en otra.
+  PYTHONHASHSEED: "0"
+  TZ: UTC
+  LC_ALL: C.UTF-8
+
+jobs:
+  lint:
+    name: ruff
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: pip
+      - run: pip install -r requirements-dev.txt
+      - name: ruff check
+        run: ruff check .
+      - name: ruff format --check
+        run: ruff format --check .
+
+  types:
+    name: mypy (app/mcp, app/agent, motor extendido)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: pip
+      - run: pip install -r requirements.txt -r requirements-dev.txt
+      - run: mypy
+
+  purity:
+    name: guard de pureza del motor
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: pip
+      # Este job no instala `mcp` ni ningún SDK de LLM a propósito: el motor
+      # tiene que poder importarse y testearse sin ellos. Si el guard pasara
+      # sólo porque las dependencias están instaladas, no probaría nada.
+      - run: pip install PyYAML==6.0.3
+      - name: el motor no importa LLM ni transporte
+        run: python -m unittest tests.test_engine_purity -v
+
+  test:
+    name: tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: pip
+      - run: pip install -r requirements.txt -r requirements-dev.txt
+      - name: bytecode
+        run: python -m compileall -q app tools tests
+      - name: golden snapshots
+        run: python -m tests.regenerate_golden --check
+      - name: unittest
+        run: python -m unittest discover -s tests -t . -v
+
+  evals:
+    name: evals (dataset + smoke)
+    runs-on: ubuntu-latest
+    # La clave se inyecta a nivel de job para que los pasos puedan decidir con
+    # `if: env...`, cosa que `secrets` no permite. Sin clave, el smoke con
+    # modelo imprime SKIPPED; el determinista corre siempre y es un gate real.
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: pip
+      - run: pip install -r requirements.txt -r requirements-dev.txt
+      - name: el dataset versionado es reproducible
+        run: python -m evals.dataset.build --verify
+      - name: smoke determinista (A0, sin LLM)
+        run: |
+          python -m evals.run --subset smoke --plan heuristic --tag ci-a0 \
+            --fail-under root_cause_accuracy=0.6 \
+            --fail-under hallucination_rate=0.15
+      - name: smoke con modelo
+        if: env.ANTHROPIC_API_KEY != ''
+        run: |
+          python -m evals.run --subset smoke --tag ci-model \
+            --fail-under root_cause_accuracy=0.6 \
+            --fail-under hallucination_rate=0.15
+      - name: smoke con modelo (omitido)
+        if: env.ANTHROPIC_API_KEY == ''
+        run: |
+          echo "::notice::SKIPPED: no hay ANTHROPIC_API_KEY; no se ejecuta el smoke con modelo."
+          echo "El smoke determinista anterior sí se ejecutó y es el gate de este job."
+
+  docker:
+    name: docker build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: loglens:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: la imagen arranca y migra
+        run: |
+          docker run --rm loglens:ci python -m app.db.migrations --status

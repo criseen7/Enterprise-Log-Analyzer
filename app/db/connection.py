@@ -25,9 +25,9 @@ Detalles que importan y no son evidentes:
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterator
 
 from app.config import Settings, get_settings
 
@@ -46,7 +46,9 @@ def _quote(value: str) -> str:
     """
     normalized = value.upper()
     if normalized not in _VALID_SYNCHRONOUS:
-        raise DatabaseError(f"synchronous inválido: {value!r}, esperado uno de {sorted(_VALID_SYNCHRONOUS)}")
+        raise DatabaseError(
+            f"synchronous inválido: {value!r}, esperado uno de {sorted(_VALID_SYNCHRONOUS)}"
+        )
     return normalized
 
 
@@ -151,4 +153,8 @@ def journal_mode(db_path: str | Path) -> str:
 def db_size_bytes(db_path: str | Path) -> int:
     """Tamaño en disco incluyendo `-wal` y `-shm`, que pueden pesar bastante."""
     path = Path(db_path)
-    return sum(p.stat().st_size for p in (path, path.with_name(path.name + "-wal"), path.with_name(path.name + "-shm")) if p.exists())
+    return sum(
+        p.stat().st_size
+        for p in (path, path.with_name(path.name + "-wal"), path.with_name(path.name + "-shm"))
+        if p.exists()
+    )

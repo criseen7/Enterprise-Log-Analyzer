@@ -70,9 +70,7 @@ def render(selected: EventFilters) -> None:
         st.info("No hay errores en el rango seleccionado.")
 
     st.divider()
-    granularity = st.radio(
-        "Granularidad del timeline", ["hour", "day"], horizontal=True, index=0
-    )
+    granularity = st.radio("Granularidad del timeline", ["hour", "day"], horizontal=True, index=0)
     series = cache.severity_series(selected.since, selected.until, granularity)
     st.subheader("Timeline por severidad")
     if series:

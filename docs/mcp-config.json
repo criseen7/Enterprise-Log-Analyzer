@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "loglens": {
+      "command": "loglens",
+      "args": ["mcp"],
+      "env": {
+        "ELA_DB_PATH": "/absolute/path/to/loglens/data/app.db",
+        "ELA_LOG_DIR": "/absolute/path/to/loglens/logs",
+        "LOGLENS_TRACES_DIR": "/absolute/path/to/loglens/traces"
+      }
+    }
+  }
+}

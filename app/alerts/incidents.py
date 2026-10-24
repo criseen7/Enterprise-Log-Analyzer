@@ -72,9 +72,7 @@ def incident_counts(conn: sqlite3.Connection) -> dict[str, int]:
     `KeyError` cuando todavía no hay ningún incidente resuelto.
     """
     counts = {status: 0 for status in VALID_STATUSES}
-    for row in conn.execute(
-        "SELECT status, COUNT(*) AS n FROM incidents GROUP BY status"
-    ):
+    for row in conn.execute("SELECT status, COUNT(*) AS n FROM incidents GROUP BY status"):
         counts[str(row["status"])] = int(row["n"])
     return counts
 
@@ -86,9 +84,7 @@ def get_incident(conn: sqlite3.Connection, incident_id: int) -> sqlite3.Row | No
     ).fetchone()
 
 
-def set_incident_status(
-    conn: sqlite3.Connection, incident_id: int, status: str
-) -> bool:
+def set_incident_status(conn: sqlite3.Connection, incident_id: int, status: str) -> bool:
     """Mueve un incidente de estado. Devuelve si existía.
 
     Reabrir (`RESOLVED` -> `OPEN`) reinicia `notified_at` a NULL a propósito: un
@@ -119,9 +115,7 @@ def set_incident_status_by_fingerprint(
     La detección indexa por fingerprint (`UNIQUE`), así que la UI, que conoce la
     huella de la fila, no necesita acarrear el `id`.
     """
-    row = conn.execute(
-        "SELECT id FROM incidents WHERE fingerprint = ?", (fingerprint,)
-    ).fetchone()
+    row = conn.execute("SELECT id FROM incidents WHERE fingerprint = ?", (fingerprint,)).fetchone()
     if row is None:
         return False
     return set_incident_status(conn, int(row["id"]), status)

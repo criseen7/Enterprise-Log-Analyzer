@@ -30,6 +30,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     ELA_LOG_DIR=/logs \
     ELA_DB_PATH=/data/app.db \
     ELA_EXPORT_DIR=/exports \
+    LOGLENS_TRACES_DIR=/traces \
     STREAMLIT_SERVER_HEADLESS=true \
     STREAMLIT_SERVER_ADDRESS=0.0.0.0 \
     STREAMLIT_SERVER_PORT=8501 \
@@ -40,8 +41,8 @@ COPY --from=builder /opt/venv /opt/venv
 # Usuario no-root. Los directorios de los volúmenes se crean aquí para que
 # Docker los inicialice con este dueño (los named volumes heredan permisos).
 RUN useradd --create-home --uid 10001 --shell /usr/sbin/nologin ela \
-    && mkdir -p /app /logs /data /exports \
-    && chown -R ela:ela /app /logs /data /exports
+    && mkdir -p /app /logs /data /exports /traces \
+    && chown -R ela:ela /app /logs /data /exports /traces
 
 WORKDIR /app
 
@@ -52,7 +53,8 @@ COPY --chown=ela:ela config.yaml ./
 
 USER ela
 
-EXPOSE 8501
+# 8501 dashboard · 8000 MCP streamable-http
+EXPOSE 8501 8000
 
 # Por defecto, una pasada de ingesta. Compose sobreescribe el comando de cada
 # servicio (`--watch` para analyzer, `streamlit run` para dashboard).

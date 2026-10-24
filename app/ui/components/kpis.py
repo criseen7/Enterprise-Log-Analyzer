@@ -29,7 +29,7 @@ def kpi_row(stats: dict) -> None:
         # Más líneas sin parsear es peor: el color del delta se invierte.
         delta_color="inverse",
         help="Porcentaje de líneas reconocidas por algún patrón. Es el indicador "
-             "de pérdida de datos: lo que no se parsea no entra en las métricas.",
+        "de pérdida de datos: lo que no se parsea no entra en las métricas.",
     )
     columns[4].metric(
         "Ventana",

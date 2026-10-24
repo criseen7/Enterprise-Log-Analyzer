@@ -1,0 +1,268 @@
+[
+  {
+    "name": "single_service",
+    "result": {
+      "fingerprint": "fp_b_single_service",
+      "total_events": 3,
+      "distinct_services": 1,
+      "affected_services": [
+        {
+          "service": "api",
+          "count": 3,
+          "first_seen": "2026-11-01T10:00:00.000Z",
+          "last_seen": "2026-11-01T10:02:00.000Z",
+          "share": 1.0
+        }
+      ],
+      "timeline": [
+        {
+          "bucket_start": "2026-11-01T10:00:00.000Z",
+          "count": 3,
+          "services": [
+            "api"
+          ]
+        }
+      ],
+      "is_cascade": false,
+      "cascade_note": "La huella sólo aparece en un servicio: no hay Cascada posible con los datos actuales.",
+      "correlation_window_minutes": 15
+    }
+  },
+  {
+    "name": "cascade_overlap",
+    "result": {
+      "fingerprint": "fp_b_cascade_overlap",
+      "total_events": 4,
+      "distinct_services": 2,
+      "affected_services": [
+        {
+          "service": "db",
+          "count": 2,
+          "first_seen": "2026-11-02T10:00:00.000Z",
+          "last_seen": "2026-11-02T10:05:00.000Z",
+          "share": 0.5
+        },
+        {
+          "service": "api",
+          "count": 2,
+          "first_seen": "2026-11-02T10:04:00.000Z",
+          "last_seen": "2026-11-02T10:10:00.000Z",
+          "share": 0.5
+        }
+      ],
+      "timeline": [
+        {
+          "bucket_start": "2026-11-02T10:00:00.000Z",
+          "count": 4,
+          "services": [
+            "api",
+            "db"
+          ]
+        }
+      ],
+      "is_cascade": true,
+      "cascade_note": "La misma huella aparece en 2 servicios y sus ventanas de fallo se solapan o están a 0 min (db / api), dentro de la ventana de correlación de 15 min: el fallo probablemente se propaga, y la causa raíz está en el servicio que falla primero.",
+      "correlation_window_minutes": 15
+    }
+  },
+  {
+    "name": "cascade_gap",
+    "result": {
+      "fingerprint": "fp_b_cascade_gap",
+      "total_events": 4,
+      "distinct_services": 2,
+      "affected_services": [
+        {
+          "service": "db",
+          "count": 2,
+          "first_seen": "2026-11-03T10:00:00.000Z",
+          "last_seen": "2026-11-03T10:02:00.000Z",
+          "share": 0.5
+        },
+        {
+          "service": "api",
+          "count": 2,
+          "first_seen": "2026-11-03T10:10:00.000Z",
+          "last_seen": "2026-11-03T10:12:00.000Z",
+          "share": 0.5
+        }
+      ],
+      "timeline": [
+        {
+          "bucket_start": "2026-11-03T10:00:00.000Z",
+          "count": 4,
+          "services": [
+            "api",
+            "db"
+          ]
+        }
+      ],
+      "is_cascade": true,
+      "cascade_note": "La misma huella aparece en 2 servicios y sus ventanas de fallo se solapan o están a 8 min (db / api), dentro de la ventana de correlación de 15 min: el fallo probablemente se propaga, y la causa raíz está en el servicio que falla primero.",
+      "correlation_window_minutes": 15
+    }
+  },
+  {
+    "name": "no_cascade_gap",
+    "result": {
+      "fingerprint": "fp_b_no_cascade_gap",
+      "total_events": 4,
+      "distinct_services": 2,
+      "affected_services": [
+        {
+          "service": "db",
+          "count": 2,
+          "first_seen": "2026-11-04T10:00:00.000Z",
+          "last_seen": "2026-11-04T10:02:00.000Z",
+          "share": 0.5
+        },
+        {
+          "service": "api",
+          "count": 2,
+          "first_seen": "2026-11-04T11:00:00.000Z",
+          "last_seen": "2026-11-04T11:02:00.000Z",
+          "share": 0.5
+        }
+      ],
+      "timeline": [
+        {
+          "bucket_start": "2026-11-04T10:00:00.000Z",
+          "count": 2,
+          "services": [
+            "db"
+          ]
+        },
+        {
+          "bucket_start": "2026-11-04T11:00:00.000Z",
+          "count": 2,
+          "services": [
+            "api"
+          ]
+        }
+      ],
+      "is_cascade": false,
+      "cascade_note": "La misma huella aparece en 2 servicios, pero sus ventanas de fallo no se solapan dentro de los 15 min: no hay evidencia de cascada.",
+      "correlation_window_minutes": 15
+    }
+  },
+  {
+    "name": "three_services",
+    "result": {
+      "fingerprint": "fp_b_three_services",
+      "total_events": 5,
+      "distinct_services": 3,
+      "affected_services": [
+        {
+          "service": "db",
+          "count": 3,
+          "first_seen": "2026-11-05T10:00:00.000Z",
+          "last_seen": "2026-11-05T10:02:00.000Z",
+          "share": 0.6
+        },
+        {
+          "service": "cache",
+          "count": 1,
+          "first_seen": "2026-11-05T10:50:00.000Z",
+          "last_seen": "2026-11-05T10:50:00.000Z",
+          "share": 0.2
+        },
+        {
+          "service": "api",
+          "count": 1,
+          "first_seen": "2026-11-05T10:05:00.000Z",
+          "last_seen": "2026-11-05T10:05:00.000Z",
+          "share": 0.2
+        }
+      ],
+      "timeline": [
+        {
+          "bucket_start": "2026-11-05T10:00:00.000Z",
+          "count": 5,
+          "services": [
+            "api",
+            "cache",
+            "db"
+          ]
+        }
+      ],
+      "is_cascade": true,
+      "cascade_note": "La misma huella aparece en 3 servicios y sus ventanas de fallo se solapan o están a 3 min (db / api), dentro de la ventana de correlación de 15 min: el fallo probablemente se propaga, y la causa raíz está en el servicio que falla primero.",
+      "correlation_window_minutes": 15
+    }
+  },
+  {
+    "name": "no_bounds",
+    "result": {
+      "fingerprint": "fp_b_no_bounds",
+      "total_events": 2,
+      "distinct_services": 2,
+      "affected_services": [
+        {
+          "service": "db",
+          "count": 1,
+          "first_seen": "2026-11-06T10:00:00.000Z",
+          "last_seen": "2026-11-06T10:00:00.000Z",
+          "share": 0.5
+        },
+        {
+          "service": "api",
+          "count": 1,
+          "first_seen": "2026-11-06T10:05:00.000Z",
+          "last_seen": "2026-11-06T10:05:00.000Z",
+          "share": 0.5
+        }
+      ],
+      "timeline": [],
+      "is_cascade": true,
+      "cascade_note": "La misma huella aparece en 2 servicios y sus ventanas de fallo se solapan o están a 5 min (db / api), dentro de la ventana de correlación de 15 min: el fallo probablemente se propaga, y la causa raíz está en el servicio que falla primero.",
+      "correlation_window_minutes": 15
+    }
+  },
+  {
+    "name": "wide_correlation_window",
+    "result": {
+      "fingerprint": "fp_b_wide_correlation_window",
+      "total_events": 4,
+      "distinct_services": 2,
+      "affected_services": [
+        {
+          "service": "db",
+          "count": 2,
+          "first_seen": "2026-11-07T10:00:00.000Z",
+          "last_seen": "2026-11-07T10:02:00.000Z",
+          "share": 0.5
+        },
+        {
+          "service": "api",
+          "count": 2,
+          "first_seen": "2026-11-07T11:00:00.000Z",
+          "last_seen": "2026-11-07T11:02:00.000Z",
+          "share": 0.5
+        }
+      ],
+      "timeline": [
+        {
+          "bucket_start": "2026-11-07T10:00:00.000Z",
+          "count": 2,
+          "services": [
+            "db"
+          ]
+        },
+        {
+          "bucket_start": "2026-11-07T11:00:00.000Z",
+          "count": 2,
+          "services": [
+            "api"
+          ]
+        }
+      ],
+      "is_cascade": true,
+      "cascade_note": "La misma huella aparece en 2 servicios y sus ventanas de fallo se solapan o están a 58 min (db / api), dentro de la ventana de correlación de 60 min: el fallo probablemente se propaga, y la causa raíz está en el servicio que falla primero.",
+      "correlation_window_minutes": 60
+    }
+  },
+  {
+    "name": "no_events",
+    "result": null
+  }
+]

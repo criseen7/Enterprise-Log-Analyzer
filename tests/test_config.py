@@ -150,7 +150,9 @@ class ValidationTests(unittest.TestCase):
         self.assertRejects("paths:\n  db_path:\n    anidado: 1\n", "no se esperaba un bloque")
 
     def test_reports_every_problem_at_once(self):
-        self.assertRejects("db:\n  busy_timeout_ms: 0\nanalysis:\n  anomaly_zscore: -1\n", "anomaly_zscore")
+        self.assertRejects(
+            "db:\n  busy_timeout_ms: 0\nanalysis:\n  anomaly_zscore: -1\n", "anomaly_zscore"
+        )
 
 
 class LogFilesTests(TempDbTestCase):
@@ -180,10 +182,7 @@ class MigrationTests(TempDbTestCase):
     def test_creates_expected_tables(self):
         migrate(self.db_path)
         conn = self.connect()
-        names = {
-            r[0]
-            for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
-        }
+        names = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         self.assertLessEqual(
             {"schema_version", "log_files", "events", "incidents", "ingest_runs"}, names
         )
@@ -196,9 +195,11 @@ class MigrationTests(TempDbTestCase):
 
     def test_applied_at_is_iso_utc(self):
         migrate(self.db_path)
-        applied_at = self.connect().execute(
-            "SELECT applied_at FROM schema_version WHERE version=1"
-        ).fetchone()[0]
+        applied_at = (
+            self.connect()
+            .execute("SELECT applied_at FROM schema_version WHERE version=1")
+            .fetchone()[0]
+        )
         self.assertRegex(applied_at, r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$")
 
     def test_status_before_and_after(self):
@@ -222,9 +223,7 @@ class MigrationTests(TempDbTestCase):
         conn.executescript((FIXTURES_DIR / "schema_v1.sql").read_text(encoding="utf-8"))
         _record(conn, _BASELINE_VERSION)
         conn.execute(_FILE_ROW)
-        conn.execute(
-            "INSERT INTO events (file_id, offset, raw_line) VALUES (1, 0, 'pre-v2')"
-        )
+        conn.execute("INSERT INTO events (file_id, offset, raw_line) VALUES (1, 0, 'pre-v2')")
         conn.close()
 
         restantes = list(range(_BASELINE_VERSION + 1, SCHEMA_VERSION + 1))
@@ -244,9 +243,7 @@ class MigrationTests(TempDbTestCase):
             [tuple(r) for r in conn.execute("SELECT path, generation FROM log_files")],
             [("logs/a.log", 0)],
         )
-        claves = [
-            r[1] for r in conn.execute("PRAGMA index_list(log_files)") if r[3] == "u"
-        ]
+        claves = [r[1] for r in conn.execute("PRAGMA index_list(log_files)") if r[3] == "u"]
         self.assertTrue(claves, "la tabla debe conservar una clave candidata tras el rebuild")
 
         # Cobertura completa: nada entre 1 y SCHEMA_VERSION sin delta ni baseline.
@@ -275,9 +272,7 @@ class MigrationTests(TempDbTestCase):
                 "VALUES (?, ?, 77, '2026-10-05T10:00:00Z', '2026-10-05T10:00:00Z')",
                 (row_id, path),
             )
-        conn.execute(
-            "INSERT INTO events (file_id, offset, raw_line) VALUES (2, 0, 'pre-v2')"
-        )
+        conn.execute("INSERT INTO events (file_id, offset, raw_line) VALUES (2, 0, 'pre-v2')")
         conn.close()
 
         self.assertEqual(
@@ -298,9 +293,9 @@ class MigrationTests(TempDbTestCase):
         ).fetchone()[0]
         self.assertEqual(huerfanos, 0, "ningún evento debe quedar huérfano")
         self.assertEqual(
-            conn.execute(
-                "SELECT COUNT(*) FROM sqlite_master WHERE name='log_files_v2'"
-            ).fetchone()[0],
+            conn.execute("SELECT COUNT(*) FROM sqlite_master WHERE name='log_files_v2'").fetchone()[
+                0
+            ],
             0,
             "no debe quedar la tabla transitoria tras una migración correcta",
         )
@@ -326,7 +321,7 @@ class MigrationTests(TempDbTestCase):
         conn.execute("ALTER TABLE events ADD COLUMN category TEXT")
         conn.close()
 
-        self.assertEqual(migrate(self.db_path), [3, SCHEMA_VERSION])
+        self.assertEqual(migrate(self.db_path), list(range(3, SCHEMA_VERSION + 1)))
         self.assertEqual(migrate(self.db_path), [], "debe ser idempotente")
 
         conn = self.connect()
@@ -374,14 +369,11 @@ class MigrationTests(TempDbTestCase):
                 (2, "basura", 0, "ningún patrón coincide"),
             ],
         )
-        total, ok = conn.execute(
-            "SELECT COUNT(*), SUM(parsed_ok) FROM events"
-        ).fetchone()[:2]
+        total, ok = conn.execute("SELECT COUNT(*), SUM(parsed_ok) FROM events").fetchone()[:2]
         self.assertEqual((total, ok), (3, 2))
         reasons = [
-            r[0] for r in conn.execute(
-                "SELECT DISTINCT parse_error FROM events WHERE parsed_ok = 0"
-            )
+            r[0]
+            for r in conn.execute("SELECT DISTINCT parse_error FROM events WHERE parsed_ok = 0")
         ]
         self.assertEqual(reasons, ["ningún patrón coincide"])
 
@@ -398,7 +390,9 @@ class MigrationTests(TempDbTestCase):
         }
         found = {
             r[0]
-            for r in conn.execute("SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'idx_%'")
+            for r in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'idx_%'"
+            )
         }
         self.assertLessEqual(expected, found)
 
@@ -409,7 +403,10 @@ class MigrationTests(TempDbTestCase):
         conn.execute(_FILE_ROW)
         conn.executemany(
             "INSERT INTO events (file_id, offset, raw_line, severity, timestamp_utc) VALUES (1,?,?,?,?)",
-            [(i, f"line {i}", 40, f"2026-10-05T14:{i // 60:02d}:{i % 60:02d}.000Z") for i in range(500)],
+            [
+                (i, f"line {i}", 40, f"2026-10-05T14:{i // 60:02d}:{i % 60:02d}.000Z")
+                for i in range(500)
+            ],
         )
         plan = conn.execute(
             "EXPLAIN QUERY PLAN SELECT * FROM events WHERE severity >= 40 AND timestamp_utc >= ?",

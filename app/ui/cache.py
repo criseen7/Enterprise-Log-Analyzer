@@ -22,6 +22,8 @@ from __future__ import annotations
 
 import streamlit as st
 
+from app.alerts.incidents import incident_counts as _incident_counts
+from app.alerts.incidents import list_incidents
 from app.analysis.anomalies import anomalies, hourly_counts
 from app.analysis.metrics import (
     by_category,
@@ -33,8 +35,6 @@ from app.analysis.metrics import (
     top_errors,
 )
 from app.analysis.patterns import recurring_patterns
-from app.alerts.incidents import incident_counts as _incident_counts
-from app.alerts.incidents import list_incidents
 from app.config import get_settings
 from app.db.connection import connection
 from app.db.repository import recent_runs
@@ -88,7 +88,10 @@ def severity_series(
     since: str | None = None, until: str | None = None, granularity: str = "hour"
 ) -> list[dict]:
     with connection(read_only=True) as conn:
-        return [row.__dict__ for row in timeline_by_severity(conn, granularity=granularity, since=since, until=until)]
+        return [
+            row.__dict__
+            for row in timeline_by_severity(conn, granularity=granularity, since=since, until=until)
+        ]
 
 
 @st.cache_data(ttl=_TTL, show_spinner=False)
@@ -96,7 +99,10 @@ def heatmap(
     since: str | None = None, until: str | None = None, min_severity: int = 45
 ) -> list[dict]:
     with connection(read_only=True) as conn:
-        return [row.__dict__ for row in heatmap_day_hour(conn, min_severity=min_severity, since=since, until=until)]
+        return [
+            row.__dict__
+            for row in heatmap_day_hour(conn, min_severity=min_severity, since=since, until=until)
+        ]
 
 
 @st.cache_data(ttl=_TTL, show_spinner=False)
@@ -104,7 +110,10 @@ def categories(
     since: str | None = None, until: str | None = None, min_severity: int = 45
 ) -> list[dict]:
     with connection(read_only=True) as conn:
-        return [row.__dict__ for row in by_category(conn, min_severity=min_severity, since=since, until=until)]
+        return [
+            row.__dict__
+            for row in by_category(conn, min_severity=min_severity, since=since, until=until)
+        ]
 
 
 @st.cache_data(ttl=_TTL, show_spinner=False)
@@ -112,7 +121,12 @@ def services(
     since: str | None = None, until: str | None = None, min_severity: int = 45, limit: int = 10
 ) -> list[dict]:
     with connection(read_only=True) as conn:
-        return [row.__dict__ for row in by_service(conn, limit=limit, min_severity=min_severity, since=since, until=until)]
+        return [
+            row.__dict__
+            for row in by_service(
+                conn, limit=limit, min_severity=min_severity, since=since, until=until
+            )
+        ]
 
 
 @st.cache_data(ttl=_TTL, show_spinner=False)
@@ -121,7 +135,10 @@ def hourly_series(
 ) -> list[dict]:
     """Serie horaria **rellenada**: es la que necesita el z-score."""
     with connection(read_only=True) as conn:
-        return [row.__dict__ for row in hourly_counts(conn, min_severity=min_severity, since=since, until=until)]
+        return [
+            row.__dict__
+            for row in hourly_counts(conn, min_severity=min_severity, since=since, until=until)
+        ]
 
 
 @st.cache_data(ttl=_TTL, show_spinner=False)
@@ -157,7 +174,16 @@ def recurrence(
     `limit=None` trae todas las huellas: los contadores de la vista no pueden
     calcularse sobre una lista recortada."""
     with connection(read_only=True) as conn:
-        return [row.__dict__ for row in recurring_patterns(conn, window_minutes=window_minutes, min_count=min_count, min_severity=min_severity, limit=limit)]
+        return [
+            row.__dict__
+            for row in recurring_patterns(
+                conn,
+                window_minutes=window_minutes,
+                min_count=min_count,
+                min_severity=min_severity,
+                limit=limit,
+            )
+        ]
 
 
 @st.cache_data(ttl=_TTL, show_spinner=False)

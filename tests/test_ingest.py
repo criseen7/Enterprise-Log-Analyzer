@@ -62,7 +62,7 @@ class IdempotenciaTest(IngestBase):
         ingest_file(self.conn, self.log, self.registry)
 
         # Escritura en curso: la línea todavía no termina en newline.
-        self.append('05/oct/2026 14:03:22.481 CEST com.acme.S : [m] INFO | a med')
+        self.append("05/oct/2026 14:03:22.481 CEST com.acme.S : [m] INFO | a med")
         partial = ingest_file(self.conn, self.log, self.registry)
         self.assertEqual(partial.entries, 0)
         self.assertEqual(partial.new_offset, len(WLS.format(n=1)))
@@ -138,8 +138,7 @@ class RotacionTest(IngestBase):
         ingest_file(self.conn, self.log, self.registry)
 
         files = [
-            r[0]
-            for r in self.conn.execute("SELECT DISTINCT file_id FROM events ORDER BY file_id")
+            r[0] for r in self.conn.execute("SELECT DISTINCT file_id FROM events ORDER BY file_id")
         ]
         self.assertEqual(len(files), 2)
         self.assertEqual(count_events(self.conn), 2)
@@ -190,9 +189,7 @@ class RotacionTest(IngestBase):
         activas_paths = {
             row[0] for row in self.conn.execute("SELECT path FROM log_files WHERE is_active=1")
         }
-        self.assertEqual(
-            activas_paths, {str(anterior.resolve()), str(nuevo.resolve())}
-        )
+        self.assertEqual(activas_paths, {str(anterior.resolve()), str(nuevo.resolve())})
 
     def test_archivo_inexistente_no_rompe_la_pasada(self):
         r = ingest_file(self.conn, self.log_dir / "nunca-existio.log", self.registry)
@@ -222,9 +219,7 @@ class MultilineaTest(IngestBase):
     def test_el_evento_conserva_el_timestamp_de_la_cabecera(self):
         self.append(WLS.format(n=1) + "Caused by: java.sql.SQLException: timeout\n")
         ingest_file(self.conn, self.log, self.registry)
-        row = self.conn.execute(
-            "SELECT timestamp_utc, severity, logger FROM events"
-        ).fetchone()
+        row = self.conn.execute("SELECT timestamp_utc, severity, logger FROM events").fetchone()
         self.assertEqual(row[0], "2026-10-05T12:03:21.481Z")
         self.assertEqual(row[1], 45)
         self.assertEqual(row[2], "com.acme.Svc")
