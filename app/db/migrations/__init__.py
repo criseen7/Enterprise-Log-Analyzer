@@ -35,6 +35,7 @@ _deltas: dict[int, Path] = {
     4: MIGRATIONS_DIR / "_004_timestamp_millis.sql",
     5: MIGRATIONS_DIR / "_005_agent_actions.sql",
     6: MIGRATIONS_DIR / "_006_agent_runs.sql",
+    7: MIGRATIONS_DIR / "_007_log_files_head_hash.sql",
 }
 
 # Versiones que entrega la baseline. Debe ser exactamente los deltas cargados:
@@ -58,10 +59,20 @@ def _delta_003_already_applied(conn) -> bool:
     return True
 
 
+def _delta_007_already_applied(conn) -> bool:
+    """True si `_007` ya añadió `log_files.head_hash`.
+
+    `ALTER TABLE ... ADD COLUMN` falla con `duplicate column name` si el DDL se
+    aplicó pero la versión no llegó a registrarse. No hay nada más que reafirmar.
+    """
+    return _column_exists(conn, "log_files", "head_hash")
+
+
 # Deltas que no son re-ejecutables en SQL puro. El guard detecta si el efecto ya
 # está presente y, de ser así, sólo reafirma su parte idempotente.
 _DELTA_GUARDS: dict[int, Callable[[sqlite3.Connection], bool]] = {
     3: _delta_003_already_applied,
+    7: _delta_007_already_applied,
 }
 
 

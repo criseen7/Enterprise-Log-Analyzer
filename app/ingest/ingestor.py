@@ -114,7 +114,7 @@ def ingest_file(
         )
 
     status = "ingested" if rows else "up_to_date"
-    if state.reason in {"rotated", "truncated"}:
+    if state.reason in {"rotated", "truncated", "recycled"}:
         status = "rotated"
 
     return FileResult(

@@ -14,6 +14,7 @@ cosas rompen cualquier esquema que use la ruta como identidad.
 
 from __future__ import annotations
 
+import hashlib
 import os
 import sqlite3
 from dataclasses import dataclass
@@ -59,7 +60,7 @@ class FileState:
     file_id: int
     offset: int
     generation: int
-    reason: str  # new | resumed | rotated | truncated | renamed
+    reason: str  # new | resumed | rotated | truncated | renamed | recycled
 
 
 @dataclass
@@ -82,6 +83,31 @@ def _stat(path: Path) -> tuple[int | None, int]:
     except FileNotFoundError:
         return None, 0
     return st.st_ino, st.st_size
+
+
+_HEAD_BYTES = 4096
+
+
+def _head_hash(path: Path) -> str | None:
+    """SHA-256 (truncado) de la primera línea completa, o `None` si no la hay.
+
+    Se lee solo el principio del archivo, no entero: el offset por bytes sigue
+    evitando releer lo ya ingerido. La primera línea no cambia al añadir líneas
+    al final, que es la operación normal de un log; sí cambia si el archivo se
+    trunca, se reescribe o el inodo fue reciclado por otro archivo.
+
+    Si la primera línea aún no está completa (sin `\\n`) no se devuelve huella:
+    todavía puede cambiar y compararla crearía generaciones espurias.
+    """
+    try:
+        with path.open("rb") as fh:
+            head = fh.read(_HEAD_BYTES)
+    except OSError:
+        return None
+    cut = head.find(b"\n")
+    if cut < 0:
+        return None
+    return hashlib.sha256(head[: cut + 1]).hexdigest()[:16]
 
 
 def _latest_for_inode(conn: sqlite3.Connection, inode: int) -> sqlite3.Row | None:
@@ -134,24 +160,31 @@ def resolve_log_file(conn: sqlite3.Connection, path: Path) -> FileState | None:
     Devuelve `None` si el archivo no existe (puede haberse rotado entre el
     listado y el read).
 
-    Los cuatro casos, en orden de comprobación:
+    Los cinco casos, en orden de comprobación:
 
     | Situación                     | Detección                          | Acción                |
     |-------------------------------|------------------------------------|-----------------------|
     | Archivo nuevo                 | inode desconocido                  | nueva fila, offset 0  |
     | Sigue creciendo               | tamaño ≥ `last_offset`             | continuar en el offset|
     | Rotado por rename             | inode conocido con otra ruta       | actualizar la ruta    |
-    | Rotado por truncado           | tamaño < `last_offset`             | nueva generación     |
+    | Rotado por truncado           | tamaño < `last_offset`             | nueva generación      |
+    | Inodo reciclado               | mismo inode, otra cabecera         | nueva generación      |
 
     El caso de rename es el que evita duplicados: cuando logrotate renombra
     `app.log` a `app.log.1`, el contenido ya fue ingerido con otra ruta. Reconocer
     el inode impide leerlo otra vez.
+
+    El inodo solo no basta: al borrar un archivo, el SO puede dar su número a uno
+    nuevo. Se compara además `head_hash` (primera línea completa): si cambió y ya había
+    contenido ingerido, es otro archivo, no un rename. La comparación también
+    detecta la reescritura de igual tamaño que el tamaño solo no ve.
     """
     resolved = path.resolve()
     inode, size = _stat(resolved)
     if inode is None:
         return None
 
+    head = _head_hash(resolved)
     stamp = now_iso()
     latest = _latest_for_inode(conn, inode)
 
@@ -159,30 +192,43 @@ def resolve_log_file(conn: sqlite3.Connection, path: Path) -> FileState | None:
         generation = _next_generation(conn, str(resolved), inode)
         cursor = conn.execute(
             "INSERT INTO log_files (path, inode, generation, size, last_offset, last_size, "
-            "first_seen, last_seen) VALUES (?, ?, ?, ?, 0, 0, ?, ?)",
-            (str(resolved), inode, generation, size, stamp, stamp),
+            "head_hash, first_seen, last_seen) VALUES (?, ?, ?, ?, 0, 0, ?, ?, ?)",
+            (str(resolved), inode, generation, size, head, stamp, stamp),
         )
         _supersede(conn, str(resolved), cursor.lastrowid, stamp)
         return FileState(cursor.lastrowid, 0, generation, "new")
 
     renamed = latest["path"] != str(resolved)
+    # Solo se compara cuando ya se ingirió contenido (`last_offset > 0`): un
+    # archivo recién creado y vacío cambia de cabecera al recibir sus primeras
+    # líneas y sigue siendo el mismo archivo. Un `head_hash` NULL es una fila
+    # anterior a v7: se rellena abajo sin crear generación.
+    head_changed = (
+        latest["last_offset"] > 0
+        and latest["head_hash"] is not None
+        and head is not None
+        and latest["head_hash"] != head
+    )
 
-    if size < latest["last_offset"]:
-        # Truncado en el mismo inode: el contenido cambió, es una generación nueva.
-        # NO se reinicia el offset sobre la misma fila: la UNIQUE(file_id, offset)
-        # descartaría los eventos nuevos como duplicados.
+    if size < latest["last_offset"] or head_changed:
+        # Truncado o reescrito en el mismo inode: el contenido cambió, es una
+        # generación nueva. NO se reinicia el offset sobre la misma fila: la
+        # UNIQUE(file_id, offset) descartaría los eventos nuevos como duplicados.
+        # Si además cambió la ruta, el inodo fue reciclado por otro archivo.
         generation = latest["generation"] + 1
+        reason = "recycled" if renamed else "truncated"
         cursor = conn.execute(
             "INSERT INTO log_files (path, inode, generation, size, last_offset, last_size, "
-            "first_seen, last_seen, rotated_at) VALUES (?, ?, ?, ?, 0, 0, ?, ?, ?)",
-            (str(resolved), inode, generation, size, stamp, stamp, stamp),
+            "head_hash, first_seen, last_seen, rotated_at) "
+            "VALUES (?, ?, ?, ?, 0, 0, ?, ?, ?, ?)",
+            (str(resolved), inode, generation, size, head, stamp, stamp, stamp),
         )
         conn.execute(
             "UPDATE log_files SET is_active = 0, rotated_at = ? WHERE id = ?",
             (stamp, latest["id"]),
         )
         _supersede(conn, str(resolved), cursor.lastrowid, stamp)
-        return FileState(cursor.lastrowid, 0, generation, "truncated")
+        return FileState(cursor.lastrowid, 0, generation, reason)
 
     if renamed:
         # `is_active = 1` no es redundante: el orden de descubrimiento importa.
@@ -195,8 +241,9 @@ def resolve_log_file(conn: sqlite3.Connection, path: Path) -> FileState | None:
         )
 
     conn.execute(
-        "UPDATE log_files SET size = ?, last_size = ?, last_seen = ?, is_active = 1 WHERE id = ?",
-        (size, size, stamp, latest["id"]),
+        "UPDATE log_files SET size = ?, last_size = ?, last_seen = ?, is_active = 1, "
+        "head_hash = COALESCE(?, head_hash) WHERE id = ?",
+        (size, size, stamp, head, latest["id"]),
     )
     # Una fila anterior que ocupaba esta ruta y no es este inode: ya no refleja
     # lo que hay en disco ahora, aunque su nombre sea el mismo.

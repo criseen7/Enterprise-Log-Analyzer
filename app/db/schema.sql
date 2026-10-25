@@ -36,6 +36,11 @@ CREATE TABLE IF NOT EXISTS log_files (
     first_seen   TEXT    NOT NULL,
     last_seen    TEXT    NOT NULL,
     rotated_at   TEXT,
+    -- SHA-256 truncado de la primera línea completa. `(inode, generation)` no
+    -- basta cuando el SO recicla un inodo: el hash distingue "mismo archivo,
+    -- otra ruta" de "otro archivo con el mismo inodo". NULL en filas históricas
+    -- y mientras la primera línea esté a medias.
+    head_hash    TEXT,
     is_active    INTEGER NOT NULL DEFAULT 1,
     UNIQUE (inode, generation)
 );

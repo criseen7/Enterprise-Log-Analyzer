@@ -48,6 +48,14 @@ ser metadata mutable: se actualiza al detectar un rename, pero no identifica nad
 | Sigue creciendo | `size ≥ last_offset` | continúa en `last_offset` |
 | Rotado por `rename` | inode conocido con otra ruta | se actualiza `path`, **no** se relee |
 | Rotado por truncado | `size < last_offset` con el mismo inode | fila nueva con `generation + 1`, offset 0 |
+| Inodo reciclado | inode conocido, otra primera línea | fila nueva con `generation + 1`, offset 0 |
+
+El último caso se añadió en v7: al borrar un archivo, el SO puede reutilizar su
+inodo para otro distinto. Sin más señal, la fila vieja parece un `rename` y su
+`last_offset` deja el archivo nuevo sin leer. `log_files.head_hash` guarda el
+SHA-256 de la **primera línea completa**; añadir líneas al final no lo cambia,
+reescribir el archivo sí. Es la misma señal que cubre `copytruncate` de igual
+tamaño, que el tamaño solo no puede distinguir.
 
 La fila anterior queda `is_active = 0`, y lo mismo le pasa a cualquier otra fila
 que ocupe la misma `path`: solo una fila con una ruta dada describe lo que hoy
@@ -80,7 +88,9 @@ caso que más a menudo se confunde con "la ingesta funciona pero no lee".
 
 **Hash del contenido como identidad.** Requiere leer el archivo entero en cada
 pasada para decidir si es el mismo, que es exactamente lo que el offset por bytes
-evita. Además un archivo que crece tiene un hash distinto en cada escritura.
+evita. Además un archivo que crece tiene un hash distinto en cada escritura. Lo
+que sí se usa (desde v7) es el hash de solo la primera línea: no identifica por
+sí solo, pero desambigua un inodo cuando el sistema de archivos lo recicla.
 
 **`mtime` como señal de cambio.** No se decide identidad con eso: el mtime cambia
 en cada `write()`, así que produciría una fila nueva por escritura. Sirve para
@@ -104,6 +114,9 @@ todo el histórico de offsets: cada arranque relee el dataset completo.
   `migrations/_002_log_files_identity.sql`, que reconstruye `log_files`. Un
   archivo `CREATE TABLE IF NOT EXISTS` no habría servido: la tabla ya existe y la
   columna `generation` no aparece sola. Ver "Detalles no obvios" más abajo.
+  `SCHEMA_VERSION` sube a 7 con `migrations/_007_log_files_head_hash.sql`, que
+  añade `head_hash`; las filas históricas quedan en `NULL` y se rellenan en la
+  primera pasada sin crear generación.
 
 ## Detalles que resultaron no obvios al implementar
 
@@ -115,13 +128,18 @@ desactivaba. Por eso la rama de rename reactiva con `is_active = 1` explícitame
 sin ese detalle, el archivo vivo aparecía como inactivo en el dashboard y su
 `last_offset` quedaba huérfano.
 
-**La detección de truncado es por tamaño y tiene un techo.** Se compara
-`size < last_offset`. Si el archivo se reescribe con **exactamente el mismo
-tamaño**, es indistinguible de "no ha cambiado" leyendo solo el tamaño. No es un
-fallo de la implementación: es el límite de la señal disponible. Cubrirlo
-exigiría leer el contenido para compararlo, que es lo que el offset por bytes
-evita. Queda anotado como deuda consciente; en la práctica `copytruncate` deja el
-archivo en 0 y las primeras escrituras son más cortas, así que la señal sí llega.
+**La detección de truncado no puede depender solo del tamaño.** Se compara
+`size < last_offset`, que falla si el archivo se reescribe con **exactamente el
+mismo tamaño**. Desde v7 lo cubre `head_hash`: la primera línea cambia aunque el
+tamaño no. Queda un techo teórico —una reescritura que preserve también la
+primera línea byte a byte— que ninguna señal barata puede distinguir; en un log
+real la primera línea lleva timestamp, así que en la práctica cambia siempre.
+
+**Leer la cabecera no es releer el archivo.** `head_hash` lee como mucho 4 KiB y
+solo hasta el primer `\\n`. El coste por pasada es una lectura pequeña, no la
+lectura completa que el offset por bytes evita. Mientras la primera línea esté a
+medias no hay huella (`NULL`): comparar un prefijo incompleto crearía
+generaciones espurias, y esas líneas todavía no se consumen de todos modos.
 
 **Las generaciones vuelven a empezar en offset 0.** Dos generaciones del mismo
 inode pueden tener eventos en offset 0. No chocan porque la clave es
@@ -140,7 +158,8 @@ idempotencia se define sobre `file_id` y no sobre `(path, offset)`.
 
 ## Deuda consciente
 
-- Truncado al mismo tamaño exacto no se detecta (arriba).
+- Una reescritura que conserve intacta la primera línea completa no se detecta;
+  el tamaño y la cabecera son las dos señales baratas disponibles.
 - `watchdog` no está instalado en el entorno actual, así que `watch()` cae en el
   camino de polling. Ambas rutas llaman a la misma
   `ingest_paths_transactional`, así que la idempotencia no depende de cuál se use;
