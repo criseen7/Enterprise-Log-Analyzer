@@ -53,7 +53,10 @@ def _color_for(line: str) -> tuple[int, int, int]:
         return BOLD
     if stripped.startswith("run ") or stripped.startswith("Traza"):
         return DIM
-    if any(stripped.startswith(label) for label in ("estado", "confianza", "causa", "huella", "servicios", "Coste")):
+    if any(
+        stripped.startswith(label)
+        for label in ("estado", "confianza", "causa", "huella", "servicios", "Coste")
+    ):
         return TEXT
     return TEXT
 
@@ -129,9 +132,7 @@ def build(transcript: Path, output: Path) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Genera el GIF de demo desde una transcripción.")
-    parser.add_argument(
-        "--transcript", type=Path, default=Path("docs/demo-transcript.txt")
-    )
+    parser.add_argument("--transcript", type=Path, default=Path("docs/demo-transcript.txt"))
     parser.add_argument("--out", type=Path, default=Path("docs/demo.gif"))
     args = parser.parse_args(argv)
     frames = build(args.transcript, args.out)

@@ -11,7 +11,9 @@ import os
 import sqlite3
 import unittest
 from pathlib import Path
+from unittest import mock
 
+from app.db import repository
 from app.db.connection import transaction
 from app.db.repository import (
     count_events,
@@ -128,9 +130,8 @@ class RotacionTest(IngestBase):
         """Ambas generaciones empiezan en offset 0: file_id las distingue.
 
         El truncado se detecta por `size < last_offset`, así que el contenido
-        nuevo debe ser más corto. `copytruncate` con un archivo reescrito al
-        mismo tamaño es indistinguible de "no ha cambiado" solo con tamaño; es
-        una limitación conocida, anotada en ADR-003, no un fallo.
+        nuevo debe ser más corto. La reescritura de igual tamaño se cubre con
+        `head_hash` (ver el test siguiente).
         """
         self.append(WLS.format(n=1))
         ingest_file(self.conn, self.log, self.registry)
@@ -142,6 +143,58 @@ class RotacionTest(IngestBase):
         ]
         self.assertEqual(len(files), 2)
         self.assertEqual(count_events(self.conn), 2)
+
+    def test_reescritura_del_mismo_tamano_se_detecta_por_la_cabecera(self):
+        """`copytruncate` que reescribe con los mismos bytes no puede pasar inadvertido.
+
+        Comparar solo el tamaño lo confundiría con "no ha cambiado" y el archivo
+        nuevo quedaría detrás de `last_offset`. `head_hash` sí cambia.
+        """
+        self.append(WLS.format(n=1))
+        ingest_file(self.conn, self.log, self.registry)
+        self.assertEqual(len(WLS.format(n=1)), len(WLS.format(n=2)))
+
+        self.log.write_text(WLS.format(n=2), encoding="utf-8")
+        r = ingest_file(self.conn, self.log, self.registry)
+
+        self.assertEqual(r.reason, "truncated")
+        self.assertEqual(r.counts.inserted, 1)
+        self.assertEqual(count_events(self.conn), 2)
+
+    def test_inodo_reciclado_es_un_archivo_nuevo_y_no_un_rename(self):
+        """El SO puede reutilizar el inodo de un archivo borrado para uno nuevo.
+
+        Sin `head_hash`, la fila vieja parece un rename y su `last_offset` deja
+        el archivo nuevo sin leer. Es el fallo intermitente que solo aparece en
+        los sistemas de archivos que reciclan inodos; aquí se fuerza el número
+        para que el test sea determinista.
+        """
+        anterior = self.log_dir / "app.log.1"
+        anterior.write_text(WLS.format(n=0), encoding="utf-8")
+        ingest_file(self.conn, anterior, self.registry)
+        inodo_viejo = os.stat(anterior).st_ino
+
+        self.append(WLS.format(n=1))
+        ingest_file(self.conn, self.log, self.registry)
+        os.rename(self.log, anterior)
+        ingest_file(self.conn, anterior, self.registry)
+
+        nuevo = self.log_dir / "app.log"
+        nuevo.write_text(WLS.format(n=2), encoding="utf-8")
+        stat_real = repository._stat
+
+        def stat_con_inodo_reciclado(p: Path) -> tuple[int | None, int]:
+            inode, size = stat_real(p)
+            if Path(p) == nuevo.resolve():
+                return inodo_viejo, size
+            return inode, size
+
+        with mock.patch.object(repository, "_stat", side_effect=stat_con_inodo_reciclado):
+            r = ingest_file(self.conn, nuevo, self.registry)
+
+        self.assertEqual(r.reason, "recycled")
+        self.assertEqual(r.counts.inserted, 1)
+        self.assertEqual(count_events(self.conn), 3)
 
     def test_rename_no_reingiere_el_contenido_ya_ingerido(self):
         self.append(WLS.format(n=1))

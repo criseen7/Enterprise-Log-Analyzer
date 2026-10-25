@@ -1,0 +1,22 @@
+-- v7 — huella de cabecera del archivo, para detectar inodos reciclados
+--
+-- `(inode, generation)` identifica un archivo mientras el inode no se recicle.
+-- Al borrar un archivo, el sistema operativo puede reutilizar su inodo para uno
+-- distinto. La fila vieja entonces parece un rename: se le actualiza la ruta y
+-- se conserva `last_offset`, que puede ser mayor o igual que el tamaño del
+-- archivo nuevo, dejándolo sin leer (fallo intermitente: depende de si el SO
+-- recicla el inodo).
+--
+-- El hash de la primera línea completa distingue "el mismo archivo en otra
+-- ruta" de "otro archivo con el mismo número de inodo": añadir líneas al final
+-- no lo cambia, reescribir el archivo sí. También cubre la reescritura de igual
+-- tamaño que la comparación por tamaño no puede ver.
+--
+-- Las filas históricas quedan en NULL; la primera pasada las rellena sin crear
+-- una generación nueva (no hay con qué comparar).
+--
+-- `ALTER TABLE ... ADD COLUMN` no acepta `IF NOT EXISTS`; el guard de la versión
+-- 7 en `migrations/__init__.py` evita el reintento fallido si el DDL se aplicó
+-- pero la versión no llegó a registrarse.
+
+ALTER TABLE log_files ADD COLUMN head_hash TEXT;
