@@ -1,0 +1,4 @@
+# Normaliza los finales de línea a LF en el índice y en el checkout.
+# Evita que un editor de Windows convierta todo el árbol a CRLF y `git status`
+# muestre 119 archivos modificados sin cambios reales.
+* text=auto eol=lf
