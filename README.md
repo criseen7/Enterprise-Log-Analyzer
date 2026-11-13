@@ -202,7 +202,7 @@ loglens investigate "checkout is failing"
 
 # 4. Serve MCP over stdio (Claude Desktop) or HTTP
 loglens mcp
-loglens mcp --http --host 0.0.0.0 --port 8000
+loglens mcp --http --host 127.0.0.1 --port 8000  # loopback: el SDK no trae auth
 ```
 
 Dashboard (optional, separate extra):
@@ -217,7 +217,7 @@ Docker, three services — analyzer, dashboard, MCP — on one database:
 ```bash
 docker compose up --build
 # dashboard  http://localhost:8501
-# MCP        http://localhost:8000/mcp
+# MCP        http://localhost:8000/mcp  (sólo loopback; para acceso remoto, proxy con TLS y auth)
 ```
 
 Claude Desktop config: [`docs/mcp-config.json`](docs/mcp-config.json).

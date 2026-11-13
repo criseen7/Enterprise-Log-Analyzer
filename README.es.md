@@ -162,7 +162,7 @@ loglens investigate "checkout falla" --no-llm   # siempre funciona
 export ANTHROPIC_API_KEY=...
 loglens investigate "checkout falla"            # con modelo
 loglens mcp                                     # stdio para Claude Desktop
-loglens mcp --http --host 0.0.0.0 --port 8000   # streamable HTTP
+loglens mcp --http --host 127.0.0.1 --port 8000   # streamable HTTP, sólo loopback
 ```
 
 Dashboard opcional: `pip install -e ".[dashboard]" && streamlit run app/ui/app.py`.
@@ -172,7 +172,7 @@ Docker (analyzer + dashboard + MCP sobre la misma base):
 ```bash
 docker compose up --build
 # dashboard  http://localhost:8501
-# MCP        http://localhost:8000/mcp
+# MCP        http://localhost:8000/mcp  (sólo loopback; para acceso remoto, proxy con TLS y auth)
 ```
 
 Config para Claude Desktop: [`docs/mcp-config.json`](docs/mcp-config.json).
