@@ -28,6 +28,7 @@ from app.agent.contracts import (
 from app.agent.llm import LLMResponse, LLMUnavailable, NullClient, estimate_cost
 from app.agent.loop import investigate
 from app.agent.promptfiles import PromptError, load_rendered, render
+from app.agent.trace import TraceRecorder
 from app.db.connection import connect
 from tests.test_mcp_tools import McpTestCase
 
@@ -549,6 +550,23 @@ class CliTests(AgentFixture):
         payload = json.loads(buffer.getvalue())
         self.assertEqual(payload["status"], "OK")
         self.assertEqual(payload["diagnosis"]["root_cause_fingerprint"], "fp_pool")
+
+
+class TraceRecorderTests(AgentFixture):
+    """El `run_id` es un nombre de archivo: se valida antes de tocar el disco."""
+
+    def test_rechaza_ids_que_escapan_del_directorio(self):
+        for run_id in ("../escape", "a/b", "..", ".", "", "x" * 81):
+            with self.subTest(run_id=run_id):
+                with self.assertRaises(ValueError):
+                    TraceRecorder(run_id, directory=self.trace_dir)
+
+    def test_un_id_valido_escribe_dentro_del_directorio(self):
+        with TraceRecorder("run-1_ok", directory=self.trace_dir) as recorder:
+            recorder.record("run.start", symptom="x")
+        path = self.trace_dir / "run-1_ok.jsonl"
+        self.assertTrue(path.is_file())
+        self.assertEqual(json.loads(path.read_text(encoding="utf-8"))["kind"], "run.start")
 
 
 class LlmHelpersTests(unittest.TestCase):

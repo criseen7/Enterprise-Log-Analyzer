@@ -20,6 +20,7 @@ import asyncio
 import os
 import unittest
 from typing import Any
+from unittest import mock
 
 from mcp import Client
 
@@ -618,6 +619,128 @@ class HitlTests(McpTestCase):
         )
         self.assertTrue(result.is_error)
         self.assertIn("CERRADO", result.content[0].text)
+
+
+class HitlHardeningTests(McpTestCase):
+    """Bordes del flujo HITL: deduplicación, idempotencia y atomicidad."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.incident_id = int(
+            self.conn.execute(
+                "INSERT INTO incidents (fingerprint, category, severity, sample_message,"
+                " first_seen, last_seen, event_count, status)"
+                " VALUES ('fp_pool', 'db_pool', 45, 'pool agotado',"
+                " '2026-10-01T10:00:00.000Z', '2026-10-01T10:00:00.000Z', 1, 'OPEN')"
+            ).lastrowid
+        )
+
+    def _pending(self, status: str = "ACKNOWLEDGED") -> dict[str, Any]:
+        return self.payload(
+            "set_incident_status",
+            {"incident_id": self.incident_id, "status": status},
+        )
+
+    def _approve(self, action_id: str) -> hitl.Action:
+        with self.connect() as conn:
+            return hitl.approve_action(conn, action_id, approved_by="tester")
+
+    def test_reutiliza_la_accion_pendiente_en_vez_de_crear_otra(self):
+        first = self._pending()
+        second = self._pending()
+        self.assertEqual(
+            first["pending_action"]["action_id"],
+            second["pending_action"]["action_id"],
+        )
+        pending = self.conn.execute(
+            "SELECT COUNT(*) FROM agent_actions WHERE status = ?", (hitl.PENDING,)
+        ).fetchone()[0]
+        self.assertEqual(pending, 1)
+
+    def test_reaprobar_devuelve_el_mismo_token_sin_reescribir_la_auditoria(self):
+        action_id = self._pending()["pending_action"]["action_id"]
+        with self.connect() as conn:
+            first = hitl.approve_action(conn, action_id, approved_by="alice")
+            second = hitl.approve_action(conn, action_id, approved_by="bob")
+        self.assertEqual(first.confirm_token, second.confirm_token)
+        self.assertEqual(second.approved_by, "alice")
+
+    def test_encuentra_la_aprobacion_aunque_haya_otras_mas_nuevas(self):
+        """El token no puede quedar fuera por un `LIMIT` de la lista de aprobadas."""
+        action_id = self._pending()["pending_action"]["action_id"]
+        action = self._approve(action_id)
+        self.conn.executemany(
+            "INSERT INTO agent_actions"
+            " (id, tool, params, status, confirm_token, created_at, expires_at)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?)",
+            [
+                (
+                    f"junk-{index}",
+                    "set_incident_status",
+                    '{"incident_id": 999999, "status": "OPEN"}',
+                    hitl.APPROVED,
+                    "0" * 64,
+                    "2099-01-01T00:00:00.000Z",
+                    "2099-01-01T00:15:00.000Z",
+                )
+                for index in range(250)
+            ],
+        )
+
+        data = self.payload(
+            "set_incident_status",
+            {
+                "incident_id": self.incident_id,
+                "status": "ACKNOWLEDGED",
+                "confirm_token": action.confirm_token,
+            },
+        )
+        self.assertEqual(data["status"], "executed")
+
+    def test_si_falla_el_cierre_no_se_muta_el_incidente(self):
+        """El UPDATE y `mark_executed` son una sola transacción."""
+        action_id = self._pending()["pending_action"]["action_id"]
+        action = self._approve(action_id)
+
+        with mock.patch.object(hitl, "mark_executed", side_effect=RuntimeError("boom")):
+            result = self.call(
+                "set_incident_status",
+                {
+                    "incident_id": self.incident_id,
+                    "status": "ACKNOWLEDGED",
+                    "confirm_token": action.confirm_token,
+                },
+            )
+
+        self.assertTrue(result.is_error)
+        status = self.conn.execute(
+            "SELECT status FROM incidents WHERE id = ?", (self.incident_id,)
+        ).fetchone()[0]
+        self.assertEqual(status, "OPEN")
+
+
+class SecretTests(McpTestCase):
+    def test_el_secreto_es_estable_y_queda_en_0600(self):
+        with mock.patch.dict(os.environ, {hitl.SECRET_ENV_VAR: ""}):
+            first = hitl.load_secret()
+            second = hitl.load_secret()
+            path = hitl.secret_path()
+        self.assertEqual(first, second)
+        if os.name != "nt":
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+
+    def test_endurece_los_permisos_de_un_secreto_existente(self):
+        path = hitl.secret_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"x" * 64)
+        if os.name != "nt":
+            os.chmod(path, 0o644)
+
+        with mock.patch.dict(os.environ, {hitl.SECRET_ENV_VAR: ""}):
+            self.assertEqual(hitl.load_secret(), b"x" * 64)
+
+        if os.name != "nt":
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
 
 
 if __name__ == "__main__":
