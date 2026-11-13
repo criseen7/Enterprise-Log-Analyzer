@@ -158,7 +158,8 @@ def _evidence(tool: str, payload: dict[str, Any], state: _State) -> list[Evidenc
                     "service": event.get("service"),
                     "category": event.get("category"),
                     "fingerprint": event.get("fingerprint"),
-                    "level": event.get("level"),
+                    "parsed_ok": event.get("parsed_ok"),
+                    "parse_error": event.get("parse_error"),
                 },
             )
             for event in payload.get("events") or []
@@ -167,16 +168,19 @@ def _evidence(tool: str, payload: dict[str, Any], state: _State) -> list[Evidenc
     if tool == "detect_anomalies":
         return [
             EvidenceItem(
-                evidence_id=f"anom:{item.get('fingerprint')}:{item.get('hour')}",
+                evidence_id=f"anom:{item.get('bucket_start')}",
                 kind="anomaly",
                 summary=(
-                    f"{item.get('count')} eventos en {item.get('hour')} (z={item.get('z_score')})"
+                    f"{item.get('count')} eventos en {item.get('bucket_start')} "
+                    f"(z={item.get('z_score')})"
                 ),
-                ts=item.get("hour"),
+                ts=item.get("bucket_start"),
                 fields={
-                    "fingerprint": item.get("fingerprint"),
                     "count": item.get("count"),
                     "z_score": item.get("z_score"),
+                    "mean": item.get("mean"),
+                    "stddev": item.get("stddev"),
+                    "is_infinite": item.get("is_infinite"),
                 },
             )
             for item in payload.get("anomalies") or []
@@ -254,8 +258,11 @@ def _evidence(tool: str, payload: dict[str, Any], state: _State) -> list[Evidenc
                     "category": payload.get("category"),
                     "category_description": payload.get("category_description"),
                     "normalized_template": payload.get("normalized_template"),
-                    "examples": payload.get("examples"),
+                    "sample_raw_lines": payload.get("sample_raw_lines"),
                     "total_events": payload.get("total_events"),
+                    "first_seen": payload.get("first_seen"),
+                    "last_seen": payload.get("last_seen"),
+                    "services": payload.get("services"),
                 },
             )
         ]
