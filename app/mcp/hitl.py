@@ -114,14 +114,53 @@ def load_secret(settings: Settings | None = None) -> bytes:
     settings = settings or get_settings()
     path = secret_path(settings)
     if path.exists():
-        return path.read_bytes()
+        try:
+            _tighten_permissions(path)
+            return path.read_bytes()
+        except FileNotFoundError:
+            # Otro proceso lo borró entre `exists()` y `read_bytes()`: se crea.
+            pass
 
     path.parent.mkdir(parents=True, exist_ok=True)
+    return _create_secret(path)
+
+
+def _tighten_permissions(path: Path) -> None:
+    """Fija 0600 también en un fichero que ya existía con permisos más amplios."""
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        # En sistemas sin permisos POSIX no hay nada que endurecer.
+        pass
+
+
+def _create_secret(path: Path) -> bytes:
+    """Crea el secreto sin pisar uno que otro proceso haya creado a la vez.
+
+    Se escribe entero en un temporal y se publica con `os.link`, que falla si el
+    destino ya existe. Así dos procesos que arrancan al mismo tiempo no pueden
+    sobrescribirse la clave: uno gana la carrera y el otro lee la del ganador.
+    """
     value = secrets.token_hex(32).encode("ascii")
-    descriptor = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(descriptor, "wb") as handle:
-        handle.write(value)
-    return value
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.{secrets.token_hex(6)}")
+    descriptor = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(value)
+            handle.flush()
+            os.fsync(handle.fileno())
+        try:
+            os.link(tmp, path)
+        except FileExistsError:
+            _tighten_permissions(path)
+            return path.read_bytes()
+        _tighten_permissions(path)
+        return value
+    finally:
+        try:
+            os.unlink(tmp)
+        except FileNotFoundError:
+            pass
 
 
 def _payload(action_id: str, tool: str, params: dict[str, object], expires_at: str) -> bytes:
@@ -165,6 +204,11 @@ def _row_to_action(row: sqlite3.Row) -> Action:
     )
 
 
+def _canonical_params(params: dict[str, object]) -> str:
+    """JSON canónico para comparar parámetros sin depender del orden de claves."""
+    return json.dumps(params, sort_keys=True, separators=(",", ":"))
+
+
 def create_action(
     conn: sqlite3.Connection,
     *,
@@ -189,7 +233,7 @@ def create_action(
         (
             action_id,
             tool,
-            json.dumps(params, sort_keys=True, separators=(",", ":")),
+            _canonical_params(params),
             PENDING,
             _stamp(now),
             expires_at,
@@ -230,6 +274,63 @@ def list_actions(
     return [_row_to_action(row) for row in conn.execute(sql, params)]
 
 
+def find_pending(
+    conn: sqlite3.Connection,
+    *,
+    tool: str,
+    params: dict[str, object],
+) -> Action | None:
+    """Acción pendiente vigente para esta tool y estos parámetros, si existe.
+
+    Evita que un agente en bucle llene `agent_actions` con la misma petición:
+    mientras la anterior siga viva, se reutiliza en vez de crear otra.
+    """
+    row = conn.execute(
+        """
+        SELECT * FROM agent_actions
+         WHERE status = ? AND tool = ? AND params = ?
+         ORDER BY created_at DESC, id DESC
+         LIMIT 1
+        """,
+        (PENDING, tool, _canonical_params(params)),
+    ).fetchone()
+    if row is None:
+        return None
+    action = _row_to_action(row)
+    return None if is_expired(action) else action
+
+
+def find_approved(
+    conn: sqlite3.Connection,
+    *,
+    tool: str,
+    params: dict[str, object],
+    token: str,
+    secret: bytes | None = None,
+) -> Action | None:
+    """Acción aprobada cuyo token autoriza esta tool con estos parámetros.
+
+    Filtra en SQL por `tool` y `params` antes de verificar el HMAC: el token no
+    se puede indexar (es un HMAC), pero el conjunto de candidatos sí. Sin este
+    filtro habría que recorrer todas las aprobadas con un `LIMIT` arbitrario, y
+    un token válido podía quedar fuera de la página.
+    """
+    key = secret if secret is not None else load_secret()
+    rows = conn.execute(
+        """
+        SELECT * FROM agent_actions
+         WHERE status = ? AND tool = ? AND params = ?
+         ORDER BY created_at DESC, id DESC
+        """,
+        (APPROVED, tool, _canonical_params(params)),
+    )
+    for row in rows:
+        action = _row_to_action(row)
+        if verify(action, tool=tool, params=params, token=token, secret=key):
+            return action
+    return None
+
+
 def is_expired(action: Action, *, now: datetime | None = None) -> bool:
     """`True` si la acción ya no puede aprobarse."""
     moment = now or _now()
@@ -255,6 +356,16 @@ def approve_action(
         raise HitlError(f"la acción {action_id!r} ya se ejecutó")
     if action.status == REJECTED:
         raise HitlError(f"la acción {action_id!r} fue rechazada")
+    if action.status == APPROVED:
+        # Aprobar dos veces es un no-op idempotente: se devuelve el mismo token
+        # sin reescribir `approved_at`/`approved_by`. Reescribirlos borraría la
+        # auditoría de quién aprobó realmente.
+        if is_expired(action):
+            conn.execute("UPDATE agent_actions SET status = ? WHERE id = ?", (EXPIRED, action_id))
+            raise HitlError(f"la acción {action_id!r} caducó y ya no se puede aprobar")
+        if not action.confirm_token:
+            raise HitlError(f"la acción {action_id!r} está aprobada pero no tiene token")
+        return action
     if action.status == EXPIRED or is_expired(action):
         conn.execute("UPDATE agent_actions SET status = ? WHERE id = ?", (EXPIRED, action_id))
         raise HitlError(f"la acción {action_id!r} caducó y ya no se puede aprobar")
@@ -358,6 +469,8 @@ __all__ = [
     "approve_action",
     "compute_token",
     "create_action",
+    "find_approved",
+    "find_pending",
     "get_action",
     "is_expired",
     "list_actions",
