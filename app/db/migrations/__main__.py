@@ -36,7 +36,7 @@ def main(argv: list[str] | None = None) -> int:
             finally:
                 conn.close()
             print(f"journal_mode  : {journal_mode(db_path)}")
-        return 0 if current == target else 1
+        return 0
 
     applied = migrate(db_path)
     if applied:

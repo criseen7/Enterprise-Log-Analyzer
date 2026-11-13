@@ -70,8 +70,9 @@ services:
 
   # El servidor MCP es otro proceso, no otro contenedor de datos: lee la misma
   # DB (WAL permite lectores concurrentes) y escribe sólo `agent_runs` y
-  # `agent_actions`. Exponerlo por HTTP permite conectarlo desde Claude Desktop
-  # o desde un cliente remoto sin compartir el sistema de archivos.
+  # `agent_actions`. El puerto se publica **sólo en loopback**: el SDK no trae
+  # autenticación y esta superficie permite proponer mutaciones. Para acceso
+  # remoto, ponerlo detrás de un proxy con TLS y auth y no exponerlo directo.
   mcp:
     build: .
     image: loglens:local
@@ -81,7 +82,7 @@ services:
       analyzer:
         condition: service_healthy
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     environment:
       ELA_PROJECT_ROOT: /app
       ELA_LOG_DIR: /logs

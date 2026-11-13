@@ -28,6 +28,7 @@ from app.agent.contracts import (
 from app.agent.llm import LLMResponse, LLMUnavailable, NullClient, estimate_cost
 from app.agent.loop import investigate
 from app.agent.promptfiles import PromptError, load_rendered, render
+from app.agent.trace import TraceRecorder
 from app.db.connection import connect
 from tests.test_mcp_tools import McpTestCase
 
@@ -205,6 +206,61 @@ class ExecutorTests(AgentFixture):
         )
         with self.assertRaises(executor.ExecutionError):
             executor.execute_plan(plan)
+
+
+class ExecutorContractTests(AgentFixture):
+    """El ejecutor lee las claves que publica el schema, no las que recuerda.
+
+    Estos tests son el guardarraíl de `_evidence`: si una tool cambia la forma de
+    su salida y el ejecutor sigue leyendo el nombre viejo, la evidencia queda con
+    `None` y el agente cita un hueco sin fallar. Cada uno llama a la tool real y
+    comprueba el campo que el ejecutor consume.
+    """
+
+    def _bundle_for(self, *steps: PlanStep) -> EvidenceBundle:
+        plan = Plan(symptom="x", restatement="x", steps=list(steps))
+        return executor.execute_plan(plan)
+
+    def test_search_events_usa_severity_y_no_inventa_level(self):
+        bundle = self._bundle_for(
+            PlanStep(
+                step_id=1,
+                hypothesis="Buscar eventos de la ventana.",
+                tool="search_events",
+                params={"limit": 5},
+            )
+        )
+        item = next(item for item in bundle.items if item.kind == "event")
+        self.assertNotIn("level", item.fields)
+        self.assertIn("severity", item.fields)
+        self.assertIsNotNone(item.fields["severity"])
+
+    def test_explain_fingerprint_usa_sample_raw_lines(self):
+        bundle = self._bundle_for(
+            PlanStep(
+                step_id=1,
+                hypothesis="Explicar la huella principal.",
+                tool="explain_fingerprint",
+                params={"fingerprint": "fp_pool"},
+            )
+        )
+        item = bundle.by_id["fp:fp_pool"]
+        self.assertTrue(item.fields["sample_raw_lines"])
+        self.assertNotIn("examples", item.fields)
+
+    def test_detect_anomalies_identifica_el_bucket_real(self):
+        bundle = self._bundle_for(
+            PlanStep(
+                step_id=1,
+                hypothesis="Buscar horas anómalas.",
+                tool="detect_anomalies",
+                params={"min_samples": 10},
+            )
+        )
+        item = next(item for item in bundle.items if item.kind == "anomaly")
+        self.assertNotIn("None", item.evidence_id)
+        self.assertEqual(item.ts, "2026-10-01T11:00")
+        self.assertIsNotNone(item.fields["count"])
 
 
 class VerifyTests(AgentFixture):
@@ -494,6 +550,23 @@ class CliTests(AgentFixture):
         payload = json.loads(buffer.getvalue())
         self.assertEqual(payload["status"], "OK")
         self.assertEqual(payload["diagnosis"]["root_cause_fingerprint"], "fp_pool")
+
+
+class TraceRecorderTests(AgentFixture):
+    """El `run_id` es un nombre de archivo: se valida antes de tocar el disco."""
+
+    def test_rechaza_ids_que_escapan_del_directorio(self):
+        for run_id in ("../escape", "a/b", "..", ".", "", "x" * 81):
+            with self.subTest(run_id=run_id):
+                with self.assertRaises(ValueError):
+                    TraceRecorder(run_id, directory=self.trace_dir)
+
+    def test_un_id_valido_escribe_dentro_del_directorio(self):
+        with TraceRecorder("run-1_ok", directory=self.trace_dir) as recorder:
+            recorder.record("run.start", symptom="x")
+        path = self.trace_dir / "run-1_ok.jsonl"
+        self.assertTrue(path.is_file())
+        self.assertEqual(json.loads(path.read_text(encoding="utf-8"))["kind"], "run.start")
 
 
 class LlmHelpersTests(unittest.TestCase):

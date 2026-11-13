@@ -31,6 +31,7 @@ from app.alerts.incidents import (
 )
 from app.analysis.anomalies import anomalies as detect
 from app.analysis.fingerprint import normalize_message
+from app.db.connection import transaction
 from app.mcp import hitl
 from app.mcp._context import read_connection, write_connection
 from app.mcp.schemas import (
@@ -227,11 +228,14 @@ def _set_status(
     params = {"incident_id": incident_id, "status": status}
 
     if confirm_token is None:
-        action = hitl.create_action(
-            conn,
-            tool="set_incident_status",
-            params=params,
-        )
+        with transaction(conn):
+            action = hitl.find_pending(
+                conn, tool="set_incident_status", params=params
+            ) or hitl.create_action(
+                conn,
+                tool="set_incident_status",
+                params=params,
+            )
         return SetIncidentStatusResult(
             status="pending_approval",
             incident_id=incident_id,
@@ -245,19 +249,24 @@ def _set_status(
             ),
         )
 
-    # El token tiene que autorizar *esta* acción: mismo id, misma tool,
-    # mismos parámetros y no caducada.
-    approved = _find_approved_action(conn, params, confirm_token)
-    if approved is None:
-        raise ToolError(
-            "el confirm_token no autoriza esta acción. Puede haber caducado, "
-            "ser de otra acción o no existir."
-        )
+    # La verificación del token, la mutación y el cierre de la acción van en una
+    # sola transacción: si el proceso muere entre el UPDATE y `mark_executed`,
+    # el token quedaría reutilizable. Con BEGIN IMMEDIATE, dos llamadas con el
+    # mismo token se serializan y la segunda ya no encuentra la acción APPROVED.
+    with transaction(conn):
+        # El token tiene que autorizar *esta* acción: mismo id, misma tool,
+        # mismos parámetros y no caducada.
+        approved = _find_approved_action(conn, params, confirm_token)
+        if approved is None:
+            raise ToolError(
+                "el confirm_token no autoriza esta acción. Puede haber caducado, "
+                "ser de otra acción o no existir."
+            )
 
-    changed = engine_set_incident_status(conn, incident_id, status)
-    if not changed:
-        raise ToolError(f"no se pudo cambiar el estado del incidente {incident_id}")
-    hitl.mark_executed(conn, approved.id, result=f"incident {incident_id} -> {status}")
+        changed = engine_set_incident_status(conn, incident_id, status)
+        if not changed:
+            raise ToolError(f"no se pudo cambiar el estado del incidente {incident_id}")
+        hitl.mark_executed(conn, approved.id, result=f"incident {incident_id} -> {status}")
 
     return SetIncidentStatusResult(
         status="executed",
@@ -277,25 +286,15 @@ def _find_approved_action(
 ) -> hitl.Action | None:
     """Busca la acción aprobada cuyo token verifique contra estos parámetros.
 
-    Se recorren las acciones aprobadas y se verifican una a una: el token es
-    un HMAC y no se puede indexar por él, pero el conjunto de acciones
-    aprobadas es pequeño y está acotado por la caducidad.
+    El filtro por `tool`/`params` y la verificación del HMAC viven en
+    `hitl.find_approved`: aquí sólo se fija la tool que esta capa muta.
     """
-    secret = hitl.load_secret()
-    for action in hitl.list_actions(conn, status=hitl.APPROVED, limit=200):
-        if action.tool != "set_incident_status":
-            continue
-        if action.params != params:
-            continue
-        if hitl.verify(
-            action,
-            tool="set_incident_status",
-            params=params,
-            token=token,
-            secret=secret,
-        ):
-            return action
-    return None
+    return hitl.find_approved(
+        conn,
+        tool="set_incident_status",
+        params=params,
+        token=token,
+    )
 
 
 def set_incident_status(

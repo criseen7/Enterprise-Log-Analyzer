@@ -65,15 +65,22 @@ def read_complete_lines(
     """Lee desde `start_offset`.
 
     Devuelve `([(byte_offset, texto)], offset_consumido)`. Solo devuelve líneas
-    terminadas en newline: si el archivo no acaba en `\n`, esa última línea queda
+    terminadas en newline: si el archivo no acaba en `\\n`, esa última línea queda
     pendiente para la próxima pasada y el offset no avanza sobre ella.
 
     El offset se calcula sobre bytes, no sobre caracteres, para que un mensaje con
     acentos o emoji no desplace la posición de las líneas siguientes.
+
+    La cabeza de la línea en curso se conserva acotada a `MAX_ENTRY_BYTES`. Un
+    archivo binario sin un solo newline no puede consumir memoria sin límite: lo
+    que exceda el tope se descarta mientras se busca el newline, y la línea se
+    emite truncada cuando aparece. El offset solo avanza sobre líneas completas.
     """
     lines: list[tuple[int, str]] = []
-    consumed = 0
-    carry = b""
+    line_start = start_offset
+    head = b""
+    line_bytes = 0
+    oversized = False
 
     try:
         with path.open("rb") as handle:
@@ -83,19 +90,33 @@ def read_complete_lines(
                 if not chunk:
                     break
 
-                buffer = carry + chunk
-                cut = buffer.rfind(NEWLINE)
-                if cut == -1:
-                    # Ninguna línea completa todavía. Se guarda el resto y se sigue
-                    # leyendo: abandonar aquí perdería todo el archivo cuando el
-                    # chunk es más pequeño que una línea, que es el caso normal si
-                    # se configura un `chunk_bytes` pequeño.
-                    carry = buffer
-                    continue
-
-                usable, carry = buffer[: cut + 1], buffer[cut + 1 :]
-                lines.extend(_split(usable, start_offset + consumed))
-                consumed += len(usable)
+                cursor = 0
+                while cursor < len(chunk):
+                    cut = chunk.find(NEWLINE, cursor)
+                    if cut == -1:
+                        segment = chunk[cursor:]
+                        line_bytes += len(segment)
+                        if not oversized:
+                            head += segment
+                            if len(head) > MAX_ENTRY_BYTES:
+                                # Se conserva solo la cabeza; el resto de la
+                                # línea se drena sin retenerlo en memoria.
+                                oversized = True
+                                head = head[: MAX_ENTRY_BYTES + 1]
+                        cursor = len(chunk)
+                    else:
+                        segment = chunk[cursor:cut]
+                        line_bytes += len(segment)
+                        if not oversized:
+                            head += segment
+                        if oversized or len(head) > MAX_ENTRY_BYTES:
+                            head = head[: MAX_ENTRY_BYTES + 1]
+                        lines.append((line_start, _decode(head)))
+                        line_start += line_bytes + 1
+                        head = b""
+                        line_bytes = 0
+                        oversized = False
+                        cursor = cut + 1
 
     except FileNotFoundError:
         # El archivo rotó entre el stat y el open. No es un error: el llamador lo
@@ -103,7 +124,14 @@ def read_complete_lines(
         # siguiente pasada.
         return [], start_offset
 
-    return lines, start_offset + consumed
+    return lines, line_start
+
+
+def _decode(raw: bytes) -> str:
+    """Decodifica una línea física y descarta el `\\r` de un CRLF."""
+    if raw.endswith(b"\r"):
+        raw = raw[:-1]
+    return raw.decode("utf-8", errors="replace")
 
 
 def _split(buffer: bytes, base: int) -> list[tuple[int, str]]:
@@ -112,13 +140,15 @@ def _split(buffer: bytes, base: int) -> list[tuple[int, str]]:
     No se usa `bytes.splitlines()`: también parte por \\v, \\f, \\x1c y otros
     separadores Unicode, lo que generaría líneas con offsets que no corresponden
     a ningún salto real del archivo.
+
+    El offset avanza por la longitud **física** de la línea, incluido el `\\r` de
+    un CRLF. Contar solo el contenido desplazaba todas las líneas siguientes en un
+    byte por cada CRLF.
     """
     out: list[tuple[int, str]] = []
     position = base
     for raw in buffer.split(NEWLINE)[:-1]:  # el último elemento va sin cerrar
-        if raw.endswith(b"\r"):
-            raw = raw[:-1]
-        out.append((position, raw.decode("utf-8", errors="replace")))
+        out.append((position, _decode(raw)))
         position += len(raw) + 1
     return out
 
