@@ -207,6 +207,61 @@ class ExecutorTests(AgentFixture):
             executor.execute_plan(plan)
 
 
+class ExecutorContractTests(AgentFixture):
+    """El ejecutor lee las claves que publica el schema, no las que recuerda.
+
+    Estos tests son el guardarraíl de `_evidence`: si una tool cambia la forma de
+    su salida y el ejecutor sigue leyendo el nombre viejo, la evidencia queda con
+    `None` y el agente cita un hueco sin fallar. Cada uno llama a la tool real y
+    comprueba el campo que el ejecutor consume.
+    """
+
+    def _bundle_for(self, *steps: PlanStep) -> EvidenceBundle:
+        plan = Plan(symptom="x", restatement="x", steps=list(steps))
+        return executor.execute_plan(plan)
+
+    def test_search_events_usa_severity_y_no_inventa_level(self):
+        bundle = self._bundle_for(
+            PlanStep(
+                step_id=1,
+                hypothesis="Buscar eventos de la ventana.",
+                tool="search_events",
+                params={"limit": 5},
+            )
+        )
+        item = next(item for item in bundle.items if item.kind == "event")
+        self.assertNotIn("level", item.fields)
+        self.assertIn("severity", item.fields)
+        self.assertIsNotNone(item.fields["severity"])
+
+    def test_explain_fingerprint_usa_sample_raw_lines(self):
+        bundle = self._bundle_for(
+            PlanStep(
+                step_id=1,
+                hypothesis="Explicar la huella principal.",
+                tool="explain_fingerprint",
+                params={"fingerprint": "fp_pool"},
+            )
+        )
+        item = bundle.by_id["fp:fp_pool"]
+        self.assertTrue(item.fields["sample_raw_lines"])
+        self.assertNotIn("examples", item.fields)
+
+    def test_detect_anomalies_identifica_el_bucket_real(self):
+        bundle = self._bundle_for(
+            PlanStep(
+                step_id=1,
+                hypothesis="Buscar horas anómalas.",
+                tool="detect_anomalies",
+                params={"min_samples": 10},
+            )
+        )
+        item = next(item for item in bundle.items if item.kind == "anomaly")
+        self.assertNotIn("None", item.evidence_id)
+        self.assertEqual(item.ts, "2026-10-01T11:00")
+        self.assertIsNotNone(item.fields["count"])
+
+
 class VerifyTests(AgentFixture):
     def test_sin_confianza_suficiente_se_aborta(self):
         bundle = EvidenceBundle(data_trust="low")

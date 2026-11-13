@@ -367,6 +367,40 @@ class ReaderTest(IngestBase):
         lines, offset = read_complete_lines(self.log_dir / "nope.log", 0)
         self.assertEqual((lines, offset), ([], 0))
 
+    def test_crlf_conserva_los_offsets_reales(self):
+        self.log.write_bytes(b"line-one\r\nline-two\r\nline-three\r\n")
+        lines, offset = read_complete_lines(self.log, 0)
+        self.assertEqual([pos for pos, _ in lines], [0, 10, 20])
+        self.assertEqual([text for _, text in lines], ["line-one", "line-two", "line-three"])
+        self.assertEqual(offset, 32)
+
+    def test_finales_de_linea_mixtos(self):
+        self.log.write_bytes(b"a\r\nb\nc\r\n")
+        lines, offset = read_complete_lines(self.log, 0)
+        self.assertEqual([pos for pos, _ in lines], [0, 3, 5])
+        self.assertEqual([text for _, text in lines], ["a", "b", "c"])
+        self.assertEqual(offset, 8)
+
+    def test_crlf_a_traves_de_chunks_de_un_byte(self):
+        self.log.write_bytes(b"aa\r\nbb\r\n")
+        lines, offset = read_complete_lines(self.log, 0, chunk_bytes=1)
+        self.assertEqual([pos for pos, _ in lines], [0, 4])
+        self.assertEqual([text for _, text in lines], ["aa", "bb"])
+        self.assertEqual(offset, 8)
+
+    def test_linea_sin_newline_no_avanza_el_offset(self):
+        self.log.write_bytes(b"X" * 64)
+        lines, offset = read_complete_lines(self.log, 0)
+        self.assertEqual((lines, offset), ([], 0))
+
+    def test_linea_gigante_se_emite_truncada_al_encontrar_el_newline(self):
+        with mock.patch("app.ingest.reader.MAX_ENTRY_BYTES", 32):
+            self.log.write_bytes(b"X" * 100 + b"\n")
+            lines, offset = read_complete_lines(self.log, 0)
+        self.assertEqual(len(lines), 1)
+        self.assertEqual(offset, 101)
+        self.assertLessEqual(len(lines[0][1]), 33)
+
     def test_iter_entries_respeta_el_offset_inicial(self):
         self.append(WLS.format(n=1) + WLS.format(n=2))
         primero = self.log.stat().st_size

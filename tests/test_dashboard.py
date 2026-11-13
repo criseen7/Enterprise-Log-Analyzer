@@ -30,11 +30,25 @@ def setUpModule() -> None:
     """Precalienta los imports pesados (streamlit/plotly/pandas).
 
     `AppTest.run()` mide su propio timeout, así que el import en frío de estas
-    librerías sobre un filesystem lento (p. ej. WSL `/mnt/c`) agotaba los 30 s
-    del primer test. Importarlas aquí las saca del presupuesto del test.
+    librerías sobre un filesystem lento (p. ej. WSL `/mnt/c`) agotaba el
+    presupuesto del primer test. Importarlas aquí las saca de ese presupuesto.
+
+    `env_util.is_repl()` es lo que dispara el aviso de Streamlit en el primer
+    `st.markdown`: recorre la pila con `inspect.stack()` y resuelve rutas reales,
+    que en frío sobre `/mnt/c` cuesta decenas de segundos. Se paga aquí una sola
+    vez, no dentro del test.
     """
-    if HAS_STREAMLIT:
-        pass
+    if not HAS_STREAMLIT:
+        return
+
+    import importlib
+
+    for module in ("pandas", "plotly", "streamlit"):
+        importlib.import_module(module)
+
+    from streamlit import env_util
+
+    env_util.is_repl()
 
 
 SAMPLE_LOG = "".join(
