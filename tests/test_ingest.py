@@ -19,9 +19,11 @@ from app.db.repository import (
     count_events,
     event_row,
     insert_events,
+    last_offset,
     parse_coverage,
     recent_runs,
     resolve_log_file,
+    update_progress,
 )
 from app.ingest.ingestor import discover, ingest_file, ingest_paths, ingest_paths_transactional
 from app.ingest.reader import MAX_ENTRY_BYTES, TRUNCATION_NOTE, iter_entries, read_complete_lines
@@ -411,6 +413,53 @@ class ReaderTest(IngestBase):
         self.assertEqual(len(tail), 1)
         self.assertEqual(offset, primero)
         self.assertIn("numero 2", tail[0].lines[0])
+
+
+class ProgressGuardTests(IngestBase):
+    """`update_progress` no puede mover una fila que ya no es ese archivo."""
+
+    def test_no_toca_una_fila_cuyo_inodo_cambio(self):
+        self.append(WLS.format(n=1))
+        state = resolve_log_file(self.conn, self.log)
+        inode = os.stat(self.log).st_ino
+
+        self.assertTrue(update_progress(self.conn, state.file_id, offset=10, size=10, inode=inode))
+        self.assertFalse(
+            update_progress(self.conn, state.file_id, offset=20, size=20, inode=inode + 1),
+            "un inodo distinto no debe avanzar el offset",
+        )
+        self.assertEqual(last_offset(self.conn, state.file_id), 10)
+
+    def test_rotacion_durante_la_lectura_conserva_la_identidad(self):
+        """El archivo nuevo no hereda el inodo ni el offset del anterior."""
+        self.append(WLS.format(n=1))
+        real_iter_entries = iter_entries
+
+        def rotate_after_read(path, offset, registry, chunk_bytes):
+            entries, new_offset = real_iter_entries(path, offset, registry, chunk_bytes)
+            os.rename(path, path.with_name("app.log.1"))
+            path.write_text(WLS.format(n=2), encoding="utf-8")
+            return entries, new_offset
+
+        with mock.patch("app.ingest.ingestor.iter_entries", side_effect=rotate_after_read):
+            first = ingest_file(self.conn, self.log, self.registry)
+
+        self.assertEqual(first.counts.inserted, 1)
+        rotated = self.log_dir / "app.log.1"
+        old_inode = os.stat(rotated).st_ino
+        row = self.conn.execute(
+            "SELECT last_offset FROM log_files WHERE inode = ?", (old_inode,)
+        ).fetchone()
+        self.assertIsNotNone(row)
+        self.assertGreater(row["last_offset"], 0, "el progreso del contenido leído debe avanzar")
+
+        second = ingest_file(self.conn, self.log, self.registry)
+        self.assertEqual(second.counts.inserted, 1, "el archivo nuevo se ingiere aparte")
+        again = ingest_file(self.conn, rotated, self.registry)
+        self.assertEqual(again.counts.inserted, 0, "el rotado no se reingiere")
+        self.assertEqual(count_events(self.conn), 2, "no hay eventos duplicados ni perdidos")
+        inodes = self.conn.execute("SELECT COUNT(DISTINCT inode) FROM log_files").fetchone()[0]
+        self.assertEqual(inodes, 2, "cada archivo conserva su propia fila")
 
 
 if __name__ == "__main__":
