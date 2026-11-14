@@ -20,6 +20,10 @@ quedar desfasados hasta 30 s — que para este caso de uso es lo correcto.
 
 from __future__ import annotations
 
+import functools
+from collections.abc import Callable
+from typing import Any, TypeVar
+
 import streamlit as st
 
 from app.alerts.incidents import incident_counts as _incident_counts
@@ -40,7 +44,38 @@ from app.db.connection import connection
 from app.db.repository import recent_runs
 from app.ui import data
 
-_TTL = get_settings().ui.cache_ttl_seconds
+F = TypeVar("F", bound=Callable[..., Any])
+
+
+def _ttl() -> int:
+    """TTL vigente, leído en cada llamada.
+
+    `get_settings()` cachea los Settings, así que la lectura es barata. No se
+    puede pasar como callable a `st.cache_data`: Streamlit resuelve el TTL una
+    sola vez, al decorar.
+    """
+    return get_settings().ui.cache_ttl_seconds
+
+
+def _cached(func: F) -> F:
+    """`st.cache_data` con el TTL configurado en cada momento.
+
+    Streamlit fija `ttl` al decorar, así que un cambio de configuración en
+    caliente dejaría la caché con el valor viejo. Aquí el decorado se
+    reconstruye solo cuando el TTL cambia; mientras no cambie, se reutiliza el
+    mismo wrapper y la caché existente.
+    """
+    state: dict[str, Any] = {"ttl": None, "cached": None}
+
+    @functools.wraps(func)
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
+        ttl = _ttl()
+        if state["ttl"] != ttl:
+            state["cached"] = st.cache_data(ttl=ttl, show_spinner=False)(func)
+            state["ttl"] = ttl
+        return state["cached"](*args, **kwargs)
+
+    return wrapper  # type: ignore[return-value]
 
 
 def _dicts(rows) -> list[dict]:
@@ -48,14 +83,14 @@ def _dicts(rows) -> list[dict]:
     return [dict(row) for row in rows]
 
 
-@st.cache_data(ttl=_TTL, show_spinner=False)
+@_cached
 def overview_stats(since: str | None = None, until: str | None = None) -> dict:
     with connection(read_only=True) as conn:
         stats = overview(conn, since=since, until=until)
     return {**stats.__dict__, "coverage": stats.coverage}
 
 
-@st.cache_data(ttl=_TTL, show_spinner=False)
+@_cached
 def errors_per_hour(
     since: str | None = None, until: str | None = None, min_severity: int = 45
 ) -> dict[str, int]:
@@ -63,7 +98,7 @@ def errors_per_hour(
         return errors_by_hour(conn, min_severity=min_severity, since=since, until=until)
 
 
-@st.cache_data(ttl=_TTL, show_spinner=False)
+@_cached
 def ranking_errors(
     since: str | None = None,
     until: str | None = None,
@@ -83,7 +118,7 @@ def ranking_errors(
     return [row.__dict__ for row in rows]
 
 
-@st.cache_data(ttl=_TTL, show_spinner=False)
+@_cached
 def severity_series(
     since: str | None = None, until: str | None = None, granularity: str = "hour"
 ) -> list[dict]:
@@ -94,7 +129,7 @@ def severity_series(
         ]
 
 
-@st.cache_data(ttl=_TTL, show_spinner=False)
+@_cached
 def heatmap(
     since: str | None = None, until: str | None = None, min_severity: int = 45
 ) -> list[dict]:
@@ -105,7 +140,7 @@ def heatmap(
         ]
 
 
-@st.cache_data(ttl=_TTL, show_spinner=False)
+@_cached
 def categories(
     since: str | None = None, until: str | None = None, min_severity: int = 45
 ) -> list[dict]:
@@ -116,7 +151,7 @@ def categories(
         ]
 
 
-@st.cache_data(ttl=_TTL, show_spinner=False)
+@_cached
 def services(
     since: str | None = None, until: str | None = None, min_severity: int = 45, limit: int = 10
 ) -> list[dict]:
@@ -129,7 +164,7 @@ def services(
         ]
 
 
-@st.cache_data(ttl=_TTL, show_spinner=False)
+@_cached
 def hourly_series(
     since: str | None = None, until: str | None = None, min_severity: int = 45
 ) -> list[dict]:
@@ -141,7 +176,7 @@ def hourly_series(
         ]
 
 
-@st.cache_data(ttl=_TTL, show_spinner=False)
+@_cached
 def spikes(
     since: str | None = None,
     until: str | None = None,
@@ -161,7 +196,7 @@ def spikes(
     return [{**item.__dict__, "is_infinite": item.is_infinite} for item in found]
 
 
-@st.cache_data(ttl=_TTL, show_spinner=False)
+@_cached
 def recurrence(
     window_minutes: int = 15,
     min_count: int = 2,
@@ -186,26 +221,26 @@ def recurrence(
         ]
 
 
-@st.cache_data(ttl=_TTL, show_spinner=False)
+@_cached
 def incidents(status: str | None = None, limit: int = 200) -> list[dict]:
     """Incidentes ya persistidos. `status=None` los trae todos."""
     with connection(read_only=True) as conn:
         return _dicts(list_incidents(conn, status=status, limit=limit))
 
 
-@st.cache_data(ttl=_TTL, show_spinner=False)
+@_cached
 def incident_counts() -> dict[str, int]:
     with connection(read_only=True) as conn:
         return _incident_counts(conn)
 
 
-@st.cache_data(ttl=_TTL, show_spinner=False)
+@_cached
 def ingest_runs(limit: int = 10) -> list[dict]:
     with connection(read_only=True) as conn:
         return _dicts(recent_runs(conn, limit=limit))
 
 
-@st.cache_data(ttl=_TTL, show_spinner=False)
+@_cached
 def watched_files() -> list[dict]:
     with connection(read_only=True) as conn:
         return _dicts(
@@ -220,7 +255,7 @@ def watched_files() -> list[dict]:
         )
 
 
-@st.cache_data(ttl=_TTL, show_spinner=False)
+@_cached
 def filter_options() -> dict[str, list[str]]:
     with connection(read_only=True) as conn:
         return {
