@@ -61,6 +61,10 @@ class FileState:
     offset: int
     generation: int
     reason: str  # new | resumed | rotated | truncated | renamed | recycled
+    # Inodo con el que se resolvió la fila. `update_progress` lo usa como
+    # guarda: si el archivo cambió de identidad durante la lectura, no se
+    # avanza el offset de una fila que ya no describe ese contenido.
+    inode: int | None = None
 
 
 @dataclass
@@ -196,7 +200,7 @@ def resolve_log_file(conn: sqlite3.Connection, path: Path) -> FileState | None:
             (str(resolved), inode, generation, size, head, stamp, stamp),
         )
         _supersede(conn, str(resolved), cursor.lastrowid, stamp)
-        return FileState(cursor.lastrowid, 0, generation, "new")
+        return FileState(cursor.lastrowid, 0, generation, "new", inode)
 
     renamed = latest["path"] != str(resolved)
     # Solo se compara cuando ya se ingirió contenido (`last_offset > 0`): un
@@ -228,7 +232,7 @@ def resolve_log_file(conn: sqlite3.Connection, path: Path) -> FileState | None:
             (stamp, latest["id"]),
         )
         _supersede(conn, str(resolved), cursor.lastrowid, stamp)
-        return FileState(cursor.lastrowid, 0, generation, reason)
+        return FileState(cursor.lastrowid, 0, generation, reason, inode)
 
     if renamed:
         # `is_active = 1` no es redundante: el orden de descubrimiento importa.
@@ -253,24 +257,35 @@ def resolve_log_file(conn: sqlite3.Connection, path: Path) -> FileState | None:
         latest["last_offset"],
         latest["generation"],
         "renamed" if renamed else "resumed",
+        inode,
     )
 
 
 def update_progress(
     conn: sqlite3.Connection, file_id: int, *, offset: int, size: int, inode: int | None
-) -> None:
+) -> bool:
     """Guarda hasta dónde se leyó. Se llama tras confirmar la inserción.
 
     El offset solo avanza si los eventos se insertaron: si la transacción falla,
     `last_offset` no se mueve y la próxima pasada reintenta esas líneas. Ese
     orden (insertar, luego avanzar el offset) es el que hace segura la recuperación
     de una corrida interrumpida.
+
+    `inode` es el que tenía la fila al resolver el archivo, no el que hay en
+    disco ahora. La condición `inode = ?` es la guarda: si entre la lectura y
+    este UPDATE el archivo fue rotado o reemplazado, la fila ya no describe el
+    contenido que se acaba de leer y no debe avanzar. La próxima pasada vuelve
+    a resolver la identidad desde cero.
+
+    Devuelve si la fila se actualizó. Un `False` no es un error: es la señal de
+    que el llamador leyó un archivo que dejó de ser el mismo.
     """
-    conn.execute(
-        "UPDATE log_files SET last_offset = ?, last_size = ?, size = ?, last_seen = ?, inode = ? "
-        "WHERE id = ?",
-        (offset, size, size, now_iso(), inode, file_id),
+    cursor = conn.execute(
+        "UPDATE log_files SET last_offset = ?, last_size = ?, size = ?, last_seen = ? "
+        "WHERE id = ? AND inode = ?",
+        (offset, size, size, now_iso(), file_id, inode),
     )
+    return cursor.rowcount == 1
 
 
 # --- inserción de eventos ----------------------------------------------
