@@ -3,7 +3,7 @@
 # --- Etapa 1: dependencias ------------------------------------------------
 # Se instalan en una venv aislada y se copia entera a la etapa final. Así ni
 # el toolchain de compilación ni la caché de pip viajan a la imagen desplegada.
-FROM python:3.12-slim AS builder
+FROM python:3.14-slim AS builder
 
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PIP_NO_CACHE_DIR=1
@@ -15,7 +15,7 @@ COPY requirements.txt ./
 RUN pip install --upgrade pip && pip install -r requirements.txt
 
 # --- Etapa 2: runtime -----------------------------------------------------
-FROM python:3.12-slim AS runtime
+FROM python:3.14-slim AS runtime
 
 # Sin .pyc y con salida sin buffer: `docker logs` legible y menos I/O.
 #
