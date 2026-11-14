@@ -9,17 +9,14 @@ concurrency:
   group: nightly-evals
   cancel-in-progress: false
 
-env:
-  ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-
 jobs:
   full:
     name: full dataset (deterministic)
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.14"
           cache: pip
@@ -34,7 +31,7 @@ jobs:
       - name: A1 · no compare_windows
         # Se ejecuta sin umbral: la ablación debe poder fallar sin romper el job.
         run: python -m evals.run --subset full --plan heuristic --ablation A1 --tag nightly-a1
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
           name: evals-deterministic
@@ -44,9 +41,12 @@ jobs:
     name: full dataset (model)
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    # La clave sólo vive en el job que la usa; el job determinista no la ve.
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.14"
           cache: pip
@@ -62,7 +62,7 @@ jobs:
         run: |
           echo "::notice::SKIPPED: ANTHROPIC_API_KEY is not configured."
           echo "The deterministic job above still ran and is the real daily signal."
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
           name: evals-model
