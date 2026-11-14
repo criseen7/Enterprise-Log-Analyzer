@@ -13,6 +13,7 @@ rastro en `agent_actions`: qué se pidió, quién lo aprobó y cuándo se ejecut
 from __future__ import annotations
 
 import sqlite3
+from datetime import timedelta
 
 from mcp.server.mcpserver.exceptions import ToolError
 
@@ -46,12 +47,26 @@ from app.mcp.schemas import (
 )
 from app.mcp.tools._base import guard
 from app.parser.severity import ERROR
+from app.timeutil import parse_utc, to_canonical
 
 # Máximo de incidentes devueltos en una página.
 MAX_LIMIT = 200
 # Eventos de evidencia que acompañan a un incidente. Suficiente para ver el
 # patrón; no para volcar el histórico.
 MAX_EVIDENCE = 20
+
+
+def _inclusive_upper(last_seen: str) -> str:
+    """Extremo superior inclusivo para un motor que trata `until` como exclusivo.
+
+    `last_seen` es la marca del último evento del incidente. Pasarla tal cual
+    dejaría ese evento fuera de su propia ventana; sumar un milisegundo lo
+    incluye sin arrastrar eventos posteriores (la base tiene resolución de ms).
+    """
+    moment = parse_utc(last_seen)
+    if moment is None:
+        return last_seen
+    return to_canonical(moment + timedelta(milliseconds=1))
 
 
 def _to_incident(row: sqlite3.Row) -> IncidentRecord:
@@ -108,6 +123,8 @@ def _detail(conn: sqlite3.Connection, incident_id: int) -> GetIncidentResult:
         return GetIncidentResult(incident=None, found=False)
 
     fingerprint = str(row["fingerprint"])
+    first_seen = str(row["first_seen"])
+    upper = _inclusive_upper(str(row["last_seen"]))
 
     evidence = [
         EventRecord(
@@ -126,11 +143,11 @@ def _detail(conn: sqlite3.Connection, incident_id: int) -> GetIncidentResult:
             SELECT id, timestamp_utc, service, severity, category, fingerprint,
                    message, parsed_ok, parse_error
               FROM events
-             WHERE fingerprint = ?
+             WHERE fingerprint = ? AND timestamp_utc >= ? AND timestamp_utc < ?
              ORDER BY timestamp_utc DESC, id DESC
              LIMIT ?
             """,
-            (fingerprint, MAX_EVIDENCE),
+            (fingerprint, first_seen, upper, MAX_EVIDENCE),
         )
     ]
 
@@ -139,22 +156,24 @@ def _detail(conn: sqlite3.Connection, incident_id: int) -> GetIncidentResult:
         for item in conn.execute(
             """
             SELECT service FROM events
-             WHERE fingerprint = ? AND service IS NOT NULL
+             WHERE fingerprint = ? AND timestamp_utc >= ? AND timestamp_utc < ?
+               AND service IS NOT NULL
              GROUP BY service ORDER BY COUNT(*) DESC
             """,
-            (fingerprint,),
+            (fingerprint, first_seen, upper),
         )
     ]
 
     # Las anomalías se limitan a la ventana del incidente: fuera de ella, un
-    # pico no tiene nada que ver con este incidente.
+    # pico no tiene nada que ver con este incidente. `upper` incluye el último
+    # evento, que `until` (exclusivo) dejaría fuera.
     related = detect(
         conn,
         z_threshold=3.0,
         min_samples=10,
         min_severity=ERROR,
-        since=row["first_seen"],
-        until=row["last_seen"],
+        since=first_seen,
+        until=upper,
     )
 
     incident = IncidentDetail(
