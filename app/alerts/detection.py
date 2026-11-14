@@ -82,7 +82,8 @@ def _upsert_incident(
     """Crea o actualiza un incidente por fingerprint.
 
     Reapertura automática: si el incidente estaba `RESOLVED` y vuelve a
-    detectarse recurrencia, pasa a `OPEN` y reinicia `notified_at` (cooldown).
+    detectarse recurrencia, pasa a `OPEN` y se notifica en esta misma pasada
+    (reiniciar el cooldown es marcar `notified_at = now`, no dejarlo en NULL).
     `event_count` refleja el conteo de la ventana, no un máximo acumulado.
     """
     notify_on_insert = _should_notify(now, None, cooldown_minutes)
@@ -129,8 +130,14 @@ def _upsert_incident(
     notify = False
 
     if status_cur == "RESOLVED":
+        # Un rebrote reabre y **notifica en esta misma pasada**. Antes se
+        # reiniciaba `notified_at` a NULL y `notify` quedaba en False: la alerta
+        # no salía hasta la siguiente evaluación, y si no había otra, no salía
+        # nunca. Reiniciar el cooldown significa marcar la notificación ahora,
+        # no dejarla pendiente.
         new_status = "OPEN"
-        new_notified_at = None
+        notify = True
+        new_notified_at = _format_iso(now)
     else:
         notify = _should_notify(now, notified_at_cur, cooldown_minutes)
         if notify:

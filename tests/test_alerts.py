@@ -56,8 +56,8 @@ class AlertsTests(UiDataTestCase):
         count = self.conn.execute("SELECT COUNT(*) FROM incidents").fetchone()[0]
         self.assertEqual(count, 25)
 
-    def test_incidente_resuelto_se_reabre_al_recurrir(self):
-        """Un rebrote sobre un incidente RESOLVED lo reabre y reinicia el cooldown."""
+    def test_incidente_resuelto_se_reabre_y_notifica_al_recurrir(self):
+        """Un rebrote reabre y notifica en esa misma pasada, sin esperar otra."""
         for i in range(60):
             self._insert(i, "fp-reabre", f"2026-10-05T12:{i:02d}:00Z")
         self.conn.commit()
@@ -70,10 +70,23 @@ class AlertsTests(UiDataTestCase):
         self.assertTrue(set_incident_status(self.conn, inc_id, "RESOLVED"))
         self.assertEqual(get_incident(self.conn, inc_id)["status"], "RESOLVED")
 
-        evaluate_incidents(self.conn, window_minutes=120, min_count=50)
+        result = evaluate_incidents(self.conn, window_minutes=120, min_count=50)
         row = get_incident(self.conn, inc_id)
         self.assertEqual(row["status"], "OPEN", "el rebrote debe reabrir el incidente")
-        self.assertIsNone(row["notified_at"], "la reapertura reinicia el cooldown")
+        self.assertTrue(
+            result["results"][0]["notified"],
+            "la reapertura notifica en la misma evaluación",
+        )
+        self.assertIsNotNone(
+            row["notified_at"],
+            "la notificación de la reapertura queda registrada (cooldown reiniciado)",
+        )
+
+        again = evaluate_incidents(self.conn, window_minutes=120, min_count=50)
+        self.assertFalse(
+            again["results"][0]["notified"],
+            "la siguiente evaluación no repite la notificación dentro del cooldown",
+        )
 
     def test_event_count_refleja_la_ventana_no_un_maximo(self):
         """`event_count` es el conteo de la ventana vigente, puede bajar."""

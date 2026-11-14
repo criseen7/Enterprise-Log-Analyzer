@@ -20,6 +20,7 @@ import importlib.util
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest import mock
 
 from tests.helpers import REPO_ROOT, EnvSandbox
 
@@ -99,6 +100,42 @@ class DashboardSmokeTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.config._cached = None
         self.cache.clear_caches()
+
+    # -- caché --------------------------------------------------------------
+
+    def test_el_ttl_se_lee_de_los_settings_vigentes(self):
+        """No se congela al importar: un cambio de configuración se refleja."""
+        with EnvSandbox(ELA_CACHE_TTL_SECONDS="7"):
+            self.config._cached = None
+            self.assertEqual(self.cache._ttl(), 7)
+        self.config._cached = None
+
+    def test_el_decorado_se_reconstruye_cuando_cambia_el_ttl(self):
+        vistos: list[int] = []
+
+        def fake_cache_data(*, ttl, show_spinner):
+            vistos.append(ttl)
+
+            def decorate(func):
+                return func
+
+            return decorate
+
+        with mock.patch.object(self.cache.st, "cache_data", side_effect=fake_cache_data):
+
+            @self.cache._cached
+            def identidad(valor):
+                return valor
+
+            with EnvSandbox(ELA_CACHE_TTL_SECONDS="5"):
+                self.config._cached = None
+                self.assertEqual(identidad(1), 1)
+            with EnvSandbox(ELA_CACHE_TTL_SECONDS="9"):
+                self.config._cached = None
+                self.assertEqual(identidad(2), 2)
+
+        self.assertEqual(vistos, [5, 9])
+        self.config._cached = None
 
     # -- utilidades ---------------------------------------------------------
 

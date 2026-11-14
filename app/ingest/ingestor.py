@@ -105,12 +105,21 @@ def ingest_file(
 
     counts = insert_events(conn, rows)
     if rows:
+        # Se compara el inode actual con el que resolvió la fila. Si el archivo
+        # rotó o fue reemplazado mientras se leía, `update_progress` no avanza
+        # nada: la fila describe el contenido anterior y la próxima pasada
+        # resuelve la identidad nueva. Los eventos ya insertados son válidos.
+        try:
+            current = os.stat(path)
+        except FileNotFoundError:
+            current = None
+        same_file = current is not None and current.st_ino == state.inode
         update_progress(
             conn,
             state.file_id,
             offset=new_offset,
-            size=path.stat().st_size,
-            inode=os.stat(path).st_ino,
+            size=current.st_size if same_file else new_offset,
+            inode=state.inode,
         )
 
     status = "ingested" if rows else "up_to_date"

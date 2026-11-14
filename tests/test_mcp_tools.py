@@ -486,6 +486,30 @@ class IncidentTests(McpTestCase):
         self.assertTrue(data["incident"]["evidence"])
         self.assertIn("pool", data["incident"]["normalized_template"])
 
+    def test_el_detalle_se_limita_a_la_ventana_del_incidente(self):
+        """Evidencia y servicios no pueden venir de fuera de la ventana."""
+        self.add_event(
+            ts="2026-10-01T09:00:00.000Z",
+            message="evento viejo",
+            service="otro",
+            fingerprint="fp_pool",
+        )
+        self.add_event(
+            ts="2026-10-01T11:00:00.000Z",
+            message="evento nuevo",
+            service="otro",
+            fingerprint="fp_pool",
+        )
+
+        data = self.payload("get_incident", {"incident_id": self.incident_id})
+        detail = data["incident"]
+        self.assertEqual(
+            [item["message"] for item in detail["evidence"]],
+            ["pool agotado"],
+            "solo el evento dentro de [first_seen, last_seen]",
+        )
+        self.assertEqual(detail["related_services"], ["checkout"])
+
     def test_un_incidente_inexistente_no_es_un_error(self):
         data = self.payload("get_incident", {"incident_id": 9999})
         self.assertFalse(data["found"])
