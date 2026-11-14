@@ -379,7 +379,7 @@ export **CSV** y **HTML** autocontenido · estados OPEN/ACK/RESOLVED
 
 ### Fase 6 — Docker ✅ *implementada 2026-10-13*
 
-`Dockerfile` multi-stage (`python:3.12-slim` pinneado) · usuario no-root (uid 10001)
+`Dockerfile` multi-stage (`python:3.14-slim` pinneado) · usuario no-root (uid 10001)
 · `.dockerignore` · `docker-compose.yml` con servicios `analyzer` (watcher, único
 escritor) y `dashboard` separados · **volúmenes** `logs:ro`, `ela-data`,
 `ela-exports` · healthchecks (base de datos en `analyzer`, `/_stcore/health` en

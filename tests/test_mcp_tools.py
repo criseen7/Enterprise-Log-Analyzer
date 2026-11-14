@@ -17,8 +17,10 @@ que hay que comprobar.
 from __future__ import annotations
 
 import asyncio
+import io
 import os
 import unittest
+from contextlib import redirect_stdout
 from typing import Any
 from unittest import mock
 
@@ -26,6 +28,7 @@ from mcp import Client
 
 from app import config
 from app.mcp import hitl
+from app.mcp.__main__ import main
 from app.mcp.server import build_server
 from tests.helpers import TempDbTestCase
 
@@ -765,6 +768,22 @@ class SecretTests(McpTestCase):
 
         if os.name != "nt":
             self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+
+
+class CliToolsTests(unittest.TestCase):
+    """`loglens tools` sostiene el único uso de la API privada del SDK."""
+
+    def test_tools_lista_el_catalogo_registrado(self):
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            rc = main(["tools"])
+
+        self.assertEqual(rc, 0)
+        output = buf.getvalue()
+        self.assertIn("loglens 0.1.0", output)
+        self.assertIn(f"{len(EXPECTED_TOOLS)} tools", output)
+        for name in EXPECTED_TOOLS:
+            self.assertIn(name, output)
 
 
 if __name__ == "__main__":
