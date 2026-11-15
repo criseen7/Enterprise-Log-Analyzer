@@ -20,8 +20,11 @@ import sqlite3
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import cast
 
 from app.parser.registry import ParseResult
+
+_UNSET = object()
 
 # Columnas de `events` que el ingestor rellena, en el orden del INSERT.
 EVENT_COLUMNS = (
@@ -60,7 +63,7 @@ class FileState:
     file_id: int
     offset: int
     generation: int
-    reason: str  # new | resumed | rotated | truncated | renamed | recycled
+    reason: str  # new | resumed | truncated | renamed | recycled | copied
     # Inodo con el que se resolvió la fila. `update_progress` lo usa como
     # guarda: si el archivo cambió de identidad durante la lectura, no se
     # avanza el offset de una fila que ya no describe ese contenido.
@@ -92,26 +95,45 @@ def _stat(path: Path) -> tuple[int | None, int]:
 _HEAD_BYTES = 4096
 
 
-def _head_hash(path: Path) -> str | None:
+def _hash_head(head: bytes) -> str | None:
     """SHA-256 (truncado) de la primera línea completa, o `None` si no la hay.
-
-    Se lee solo el principio del archivo, no entero: el offset por bytes sigue
-    evitando releer lo ya ingerido. La primera línea no cambia al añadir líneas
-    al final, que es la operación normal de un log; sí cambia si el archivo se
-    trunca, se reescribe o el inodo fue reciclado por otro archivo.
 
     Si la primera línea aún no está completa (sin `\\n`) no se devuelve huella:
     todavía puede cambiar y compararla crearía generaciones espurias.
     """
+    cut = head.find(b"\n")
+    if cut < 0:
+        return None
+    return hashlib.sha256(head[: cut + 1]).hexdigest()[:16]
+
+
+def head_hash_from_fd(fd: int) -> str | None:
+    """Huella de la cabecera leída del **mismo** descriptor que se va a ingerir.
+
+    Es la pieza que cierra el TOCTOU: si la ruta se renombra o se reemplaza
+    entre el `stat` y la lectura, un `open(path)` leería otro archivo que el que
+    resolvió la identidad. Aquí el hash y el `fstat` vienen del descriptor
+    abierto, así que ambos describen el contenido que realmente se lee.
+    """
+    position = os.lseek(fd, 0, os.SEEK_CUR)
+    try:
+        os.lseek(fd, 0, os.SEEK_SET)
+        head = os.read(fd, _HEAD_BYTES)
+    except OSError:
+        return None
+    finally:
+        os.lseek(fd, position, os.SEEK_SET)
+    return _hash_head(head)
+
+
+def _head_hash(path: Path) -> str | None:
+    """Huella de la cabecera abriendo la ruta. Solo para llamadores sin fd."""
     try:
         with path.open("rb") as fh:
             head = fh.read(_HEAD_BYTES)
     except OSError:
         return None
-    cut = head.find(b"\n")
-    if cut < 0:
-        return None
-    return hashlib.sha256(head[: cut + 1]).hexdigest()[:16]
+    return _hash_head(head)
 
 
 def _latest_for_inode(conn: sqlite3.Connection, inode: int) -> sqlite3.Row | None:
@@ -158,17 +180,62 @@ def _supersede(conn: sqlite3.Connection, path: str, keep_id: int, stamp: str) ->
     )
 
 
-def resolve_log_file(conn: sqlite3.Connection, path: Path) -> FileState | None:
+def _copy_source(
+    conn: sqlite3.Connection, path: str, inode: int, head: str | None, size: int
+) -> sqlite3.Row | None:
+    """Fila de origen de una copia hecha por `copytruncate`, si existe.
+
+    `copytruncate` hace `cp app.log app.log.1` y luego trunca `app.log`. El
+    archivo nuevo (`app.log.1`) tiene un inode distinto, así que por identidad
+    parece "archivo nuevo" y se leería desde cero: cada evento del prefijo se
+    insertaría de nuevo, esta vez bajo otro `file_id`.
+
+    Para reconocerlo se busca otra fila con la misma cabecera (`head_hash`) cuyo
+    `last_offset` ya cubra contenido y quepa en la copia (`last_offset <= size`).
+    La nueva fila nace con ese offset heredado, de modo que solo se lee lo que
+    aún no se había ingerido. Exigir que el nombre sea una rotación del origen
+    (`app.log` -> `app.log.1`) evita que dos logs distintos que casualmente
+    empiezan igual se confundan.
+    """
+    if head is None:
+        return None
+    row = conn.execute(
+        "SELECT * FROM log_files WHERE inode IS NOT NULL AND inode <> ? AND path <> ? "
+        "AND head_hash = ? AND last_offset > 0 AND last_offset <= ? "
+        "ORDER BY last_offset DESC, id DESC LIMIT 1",
+        (inode, path, head, size),
+    ).fetchone()
+    if row is None:
+        return None
+    if not Path(path).name.startswith(Path(row["path"]).name + "."):
+        return None
+    return row
+
+
+def resolve_log_file(
+    conn: sqlite3.Connection,
+    path: Path,
+    *,
+    stat_result: os.stat_result | None = None,
+    head_hash: object = _UNSET,
+) -> FileState | None:
     """Determina la fila de `log_files` para `path` y el offset desde el que leer.
 
     Devuelve `None` si el archivo no existe (puede haberse rotado entre el
     listado y el read).
 
-    Los cinco casos, en orden de comprobación:
+    `stat_result` y `head_hash` permiten inyectar la identidad leída de un
+    descriptor ya abierto. El ingestor los usa para que el `fstat`/hash y la
+    lectura posterior describan el mismo archivo aunque la ruta rote entre
+    ambos pasos. Sin ellos se abre la ruta, que es lo correcto para un llamador
+    que solo quiere consultar el estado.
+
+    Los seis casos, en orden de comprobación:
 
     | Situación                     | Detección                          | Acción                |
     |-------------------------------|------------------------------------|-----------------------|
     | Archivo nuevo                 | inode desconocido                  | nueva fila, offset 0  |
+    | Copia de `copytruncate`       | inode nuevo + misma cabecera       | offset heredado       |
     | Sigue creciendo               | tamaño ≥ `last_offset`             | continuar en el offset|
     | Rotado por rename             | inode conocido con otra ruta       | actualizar la ruta    |
     | Rotado por truncado           | tamaño < `last_offset`             | nueva generación      |
@@ -184,23 +251,29 @@ def resolve_log_file(conn: sqlite3.Connection, path: Path) -> FileState | None:
     detecta la reescritura de igual tamaño que el tamaño solo no ve.
     """
     resolved = path.resolve()
-    inode, size = _stat(resolved)
-    if inode is None:
-        return None
+    if stat_result is None:
+        inode, size = _stat(resolved)
+        if inode is None:
+            return None
+    else:
+        inode, size = stat_result.st_ino, stat_result.st_size
 
-    head = _head_hash(resolved)
+    head = _head_hash(resolved) if head_hash is _UNSET else cast(str | None, head_hash)
     stamp = now_iso()
     latest = _latest_for_inode(conn, inode)
 
     if latest is None:
+        copy_source = _copy_source(conn, str(resolved), inode, head, size)
+        offset = int(copy_source["last_offset"]) if copy_source is not None else 0
+        reason = "copied" if copy_source is not None else "new"
         generation = _next_generation(conn, str(resolved), inode)
         cursor = conn.execute(
             "INSERT INTO log_files (path, inode, generation, size, last_offset, last_size, "
-            "head_hash, first_seen, last_seen) VALUES (?, ?, ?, ?, 0, 0, ?, ?, ?)",
-            (str(resolved), inode, generation, size, head, stamp, stamp),
+            "head_hash, first_seen, last_seen) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (str(resolved), inode, generation, size, offset, offset, head, stamp, stamp),
         )
         _supersede(conn, str(resolved), cursor.lastrowid, stamp)
-        return FileState(cursor.lastrowid, 0, generation, "new", inode)
+        return FileState(cursor.lastrowid, offset, generation, reason, inode)
 
     renamed = latest["path"] != str(resolved)
     # Solo se compara cuando ya se ingirió contenido (`last_offset > 0`): un
@@ -271,18 +344,20 @@ def update_progress(
     orden (insertar, luego avanzar el offset) es el que hace segura la recuperación
     de una corrida interrumpida.
 
-    `inode` es el que tenía la fila al resolver el archivo, no el que hay en
-    disco ahora. La condición `inode = ?` es la guarda: si entre la lectura y
-    este UPDATE el archivo fue rotado o reemplazado, la fila ya no describe el
-    contenido que se acaba de leer y no debe avanzar. La próxima pasada vuelve
-    a resolver la identidad desde cero.
+    `inode` es el del descriptor desde el que se leyó, no el que hay en la
+    ruta ahora. La condición `inode = ?` es la guarda real: si otra pasada
+    creó una generación nueva (o la fila fue desactivada por una rotación), el
+    UPDATE no toca una fila que ya no describe el contenido leído. Con el
+    lector por descriptor, el inodo del `fstat` y el de la lectura coinciden por
+    construcción; la guarda protege del caso en que otra escritura mueva la
+    fila entre resolver y confirmar.
 
     Devuelve si la fila se actualizó. Un `False` no es un error: es la señal de
     que el llamador leyó un archivo que dejó de ser el mismo.
     """
     cursor = conn.execute(
         "UPDATE log_files SET last_offset = ?, last_size = ?, size = ?, last_seen = ? "
-        "WHERE id = ? AND inode = ?",
+        "WHERE id = ? AND inode = ? AND is_active = 1",
         (offset, size, size, now_iso(), file_id, inode),
     )
     return cursor.rowcount == 1

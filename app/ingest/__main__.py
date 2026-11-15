@@ -19,6 +19,7 @@ from app.analysis.errors import ErrorRules
 from app.config import load_settings
 from app.db.connection import connect
 from app.db.migrations import migrate
+from app.db.migrations import status as schema_status
 from app.db.repository import parse_coverage, recent_runs
 from app.ingest.ingestor import ingest_paths_transactional, summarize
 from app.parser.registry import Registry
@@ -60,13 +61,27 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     config = load_settings(config_path=args.config)
 
+    # `--status` es de solo lectura: no debe migrar ni crear el esquema. Un
+    # operador que pregunta "¿en qué versión está la base?" no espera que la
+    # pregunta la modifique.
+    if args.status:
+        current, target = schema_status(config.paths.db_path)
+        if current == 0:
+            print(f"base sin migrar (v0, objetivo v{target})")
+            return 0
+        conn = connect(config.paths.db_path)
+        try:
+            return show_status(conn)
+        finally:
+            conn.close()
+
     migrate(config.paths.db_path)
     conn = connect(config.paths.db_path)
     try:
-        if args.status:
-            return show_status(conn)
-
-        registry = Registry.from_directory(config.paths.patterns_dir)
+        registry = Registry.from_directory(
+            config.paths.patterns_dir,
+            default_timezone=config.ingest.default_timezone,
+        )
         # Carga aquí (no dentro del bucle): un YAML de reglas mal formado debe
         # romper al arrancar, con la regla culpable en el mensaje.
         rules = ErrorRules.load(config.analysis.rules_path)

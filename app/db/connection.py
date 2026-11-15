@@ -130,15 +130,27 @@ def transaction(conn: sqlite3.Connection) -> Iterator[sqlite3.Connection]:
     `isolation_level=None` deja a SQLite en autocommit, así que el BEGIN/COMMIT
     hay que emitirlos a mano. Es lo que permite hacer `executemany` de miles de
     eventos en una sola transacción en vez de uno por uno.
+
+    Si el cuerpo falla, o si el propio `COMMIT` falla (disco lleno, lock,
+    interrupción), se hace `ROLLBACK` mientras la transacción siga viva. Sin
+    eso, un COMMIT fallido dejaba la conexión con una transacción abierta y el
+    siguiente `BEGIN` reventaba con "cannot start a transaction within a
+    transaction".
     """
     conn.execute("BEGIN IMMEDIATE")
     try:
         yield conn
-    except Exception:
-        conn.execute("ROLLBACK")
+    except BaseException:
+        if conn.in_transaction:
+            conn.execute("ROLLBACK")
         raise
-    else:
+
+    try:
         conn.execute("COMMIT")
+    except BaseException:
+        if conn.in_transaction:
+            conn.execute("ROLLBACK")
+        raise
 
 
 def journal_mode(db_path: str | Path) -> str:

@@ -17,12 +17,19 @@ una sola vez, en v0, y desde ahí solo los deltas.
 
 from __future__ import annotations
 
+import os
 import sqlite3
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 from app.db.connection import connect
 from app.db.schema import SCHEMA_PATH, SCHEMA_VERSION
+
+try:  # pragma: no cover - Windows no tiene fcntl; allí el lock es un no-op
+    import fcntl
+except ImportError:  # pragma: no cover
+    fcntl = None  # type: ignore[assignment]
 
 MIGRATIONS_DIR = Path(__file__).resolve().parent
 _BASELINE_VERSION = 1
@@ -141,8 +148,46 @@ def _apply_script(conn, script: Path, version: int) -> None:
     _record(conn, version)
 
 
+@contextmanager
+def _migration_lock(db_path: str | Path) -> Iterator[None]:
+    """Serializa `migrate()` entre procesos.
+
+    El baseline y los deltas asumen un único aplicador: dos contenedores que
+    arrancan a la vez (analyzer + dashboard) pueden intentar crear el esquema
+    con `executescript()` y competir por el mismo `schema_version`. SQLite
+    serializa escrituras, pero no la secuencia "leer versión → aplicar script →
+    registrar": el segundo proceso lee v0 y vuelve a aplicar deltas ya
+    aplicados. Un lock de archivo alrededor de toda la migración lo evita.
+
+    En `:memory:` no hay archivo que compartir y en plataformas sin `fcntl`
+    (Windows) se degrada a no-op; el caso real del despliegue es Linux.
+    """
+    path = Path(db_path)
+    if fcntl is None or str(path) == ":memory:":
+        yield
+        return
+
+    lock_path = path.with_name(path.name + ".migrate.lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o644)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+        finally:
+            os.close(fd)
+
+
 def migrate(db_path: str | Path, *, target: int | None = None) -> list[int]:
-    """Aplica las migraciones faltantes. Idempotente: correrla dos veces no hace nada."""
+    """Aplica las migraciones faltantes. Idempotente y serializada entre procesos."""
+    with _migration_lock(db_path):
+        return _migrate_locked(db_path, target=target)
+
+
+def _migrate_locked(db_path: str | Path, *, target: int | None = None) -> list[int]:
+    """Cuerpo de `migrate()`; el llamador ya tiene el lock."""
     # `is None` y no `or`: target=0 es un valor legítimo (pedir v0 explícitamente)
     # y con `or` se convertiría silenciosamente en SCHEMA_VERSION.
     target = SCHEMA_VERSION if target is None else target

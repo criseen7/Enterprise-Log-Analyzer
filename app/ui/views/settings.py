@@ -30,7 +30,10 @@ from app.ui.theme import format_int
 
 def _run_ingest() -> str:
     settings = get_settings()
-    registry = Registry.from_directory(settings.paths.patterns_dir)
+    registry = Registry.from_directory(
+        settings.paths.patterns_dir,
+        default_timezone=settings.ingest.default_timezone,
+    )
     rules = ErrorRules.load(settings.analysis.rules_path)
     paths = discover(settings)
     if not paths:
