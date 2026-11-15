@@ -2,14 +2,23 @@
 
 El orden de las operaciones es lo que hace la ingesta recuperable:
 
-1. `resolve_log_file()` — averigua la fila y el offset desde el que leer.
-2. Se leen y parsean las líneas nuevas.
-3. Se insertan los eventos.
-4. **Solo entonces** se avanza `last_offset`.
+1. Se abre el archivo **una sola vez** y se lee su identidad (`fstat` + hash de
+   cabecera) del mismo descriptor.
+2. `resolve_log_file()` — averigua la fila y el offset desde el que leer usando
+   esa identidad.
+3. Se leen y parsean las líneas nuevas, por lotes acotados.
+4. Se insertan los eventos.
+5. **Solo entonces** se avanza `last_offset`, en la misma transacción corta que
+   la inserción del lote.
 
-Si el paso 3 falla, el offset no se mueve y la siguiente pasada reintenta esas
+Si el paso 4 falla, el offset no se mueve y la siguiente pasada reintenta esas
 líneas. Al revés, un offset avanzado sin eventos insertados perdería datos para
 siempre: el archivo ya no volvería a entregar esas líneas.
+
+Abrir una vez y leer del descriptor cierra el TOCTOU clásico: entre `stat(path)`
+y `open(path)` el archivo puede rotar, y se acabaría resolviendo la identidad de
+un contenido y leyendo otro. Con `os.open` + `os.fstat` ambos describen el mismo
+archivo aunque la ruta cambie después.
 """
 
 from __future__ import annotations
@@ -23,25 +32,27 @@ from pathlib import Path
 
 from app.analysis.errors import ErrorRules
 from app.analysis.fingerprint import event_fingerprint
+from app.db.connection import transaction
 from app.db.repository import (
     InsertCounts,
     count_events,
     event_row,
     finish_run,
+    head_hash_from_fd,
     insert_events,
     parse_coverage,
     resolve_log_file,
     start_run,
     update_progress,
 )
-from app.ingest.reader import iter_entries
+from app.ingest.reader import RawEntry, iter_entry_batches
 from app.parser.registry import Registry
 
 
 @dataclass
 class FileResult:
     path: Path
-    status: str  # ingested | up_to_date | rotated | vanished
+    status: str  # ingested | up_to_date | rotated | vanished | error
     reason: str
     entries: int = 0
     counts: InsertCounts = field(default_factory=InsertCounts)
@@ -62,6 +73,68 @@ class RunResult:
     errors: list[str] = field(default_factory=list)
 
 
+def _fstat_fd(fd: int) -> os.stat_result:
+    """Indirección mínima para poder forzar un inodo en los tests de reciclado."""
+    return os.fstat(fd)
+
+
+def _parse_entries(
+    registry: Registry,
+    rules: ErrorRules,
+    file_id: int,
+    entries: list[RawEntry],
+) -> tuple[list[tuple], int]:
+    """Convierte entradas en filas de `events`. No toca la base."""
+    rows: list[tuple] = []
+    unparsed = 0
+    for entry in entries:
+        result = registry.parse_line(entry.text)
+        if not result.parsed_ok:
+            unparsed += 1
+        # `message` puede ser None en una línea vacía: la huella se calcula
+        # sobre lo que haya, igual que hace el backfill con COALESCE(message, raw_line).
+        text = result.message or result.raw_line
+        category = rules.category(text)
+        rows.append(
+            event_row(
+                file_id,
+                entry.offset,
+                result,
+                event_fingerprint(category, text),
+                category,
+            )
+        )
+    return rows, unparsed
+
+
+def _commit_batch(
+    conn: sqlite3.Connection,
+    file_id: int,
+    rows: list[tuple],
+    *,
+    offset: int,
+    size: int,
+    inode: int,
+) -> InsertCounts:
+    """Inserta un lote y avanza el offset en la misma transacción corta.
+
+    Si el llamador ya abrió una transacción (los tests lo hacen para demostrar
+    el rollback completo), no se anida: se participa de la externa y el COMMIT
+    queda en manos de quien la abrió. En operación normal, cada lote es una
+    transacción independiente: un archivo de millones de líneas no bloquea la
+    base durante toda la pasada ni acumula las filas en memoria.
+    """
+    if conn.in_transaction:
+        counts = insert_events(conn, rows)
+        update_progress(conn, file_id, offset=offset, size=size, inode=inode)
+        return counts
+
+    with transaction(conn):
+        counts = insert_events(conn, rows)
+        update_progress(conn, file_id, offset=offset, size=size, inode=inode)
+    return counts
+
+
 def ingest_file(
     conn,
     path: Path,
@@ -76,61 +149,62 @@ def ingest_file(
     con `analysis.rules_path` custom debe pasarlas, si no, dos rutas de
     clasificación convivirían en la misma base.
     """
-    state = resolve_log_file(conn, path)
-    if state is None:
+    rules = rules or ErrorRules.default()
+    resolved = path.resolve()
+    try:
+        fd = os.open(resolved, os.O_RDONLY)
+    except (FileNotFoundError, NotADirectoryError):
         return FileResult(path, "vanished", "no existe en disco")
 
-    rules = rules or ErrorRules.default()
-    entries, new_offset = iter_entries(path, state.offset, registry, chunk_bytes)
-
-    rows: list[tuple] = []
+    entries = 0
+    counts = InsertCounts()
     unparsed = 0
-    for entry in entries:
-        result = registry.parse_line(entry.text)
-        if not result.parsed_ok:
-            unparsed += 1
-        # `message` puede ser None en una línea vacía: la huella se calcula
-        # sobre lo que haya, igual que hace el backfill con COALESCE(message, raw_line).
-        text = result.message or result.raw_line
-        category = rules.category(text)
-        rows.append(
-            event_row(
-                state.file_id,
-                entry.offset,
-                result,
-                event_fingerprint(category, text),
-                category,
-            )
-        )
+    new_offset = 0
 
-    counts = insert_events(conn, rows)
-    if rows:
-        # Se compara el inode actual con el que resolvió la fila. Si el archivo
-        # rotó o fue reemplazado mientras se leía, `update_progress` no avanza
-        # nada: la fila describe el contenido anterior y la próxima pasada
-        # resuelve la identidad nueva. Los eventos ya insertados son válidos.
-        try:
-            current = os.stat(path)
-        except FileNotFoundError:
-            current = None
-        same_file = current is not None and current.st_ino == state.inode
-        update_progress(
+    try:
+        stat_result = _fstat_fd(fd)
+        state = resolve_log_file(
             conn,
-            state.file_id,
-            offset=new_offset,
-            size=current.st_size if same_file else new_offset,
-            inode=state.inode,
+            path,
+            stat_result=stat_result,
+            head_hash=head_hash_from_fd(fd),
         )
+        if state is None:
+            return FileResult(path, "vanished", "no existe en disco")
 
-    status = "ingested" if rows else "up_to_date"
-    if state.reason in {"rotated", "truncated", "recycled"}:
+        new_offset = state.offset
+        handle = os.fdopen(fd, "rb")
+        fd = -1  # el descriptor pasa a ser propiedad del handle
+        with handle:
+            batches = iter_entry_batches(handle, state.offset, registry, chunk_bytes)
+            for batch, batch_end in batches:
+                rows, batch_unparsed = _parse_entries(registry, rules, state.file_id, batch)
+                batch_counts = _commit_batch(
+                    conn,
+                    state.file_id,
+                    rows,
+                    offset=batch_end,
+                    size=max(stat_result.st_size, batch_end),
+                    inode=stat_result.st_ino,
+                )
+                entries += len(batch)
+                counts.inserted += batch_counts.inserted
+                counts.skipped += batch_counts.skipped
+                unparsed += batch_unparsed
+                new_offset = batch_end
+    finally:
+        if fd >= 0:
+            os.close(fd)
+
+    status = "ingested" if entries else "up_to_date"
+    if state.reason in {"truncated", "recycled", "copied"}:
         status = "rotated"
 
     return FileResult(
         path=path,
         status=status,
         reason=state.reason,
-        entries=len(entries),
+        entries=entries,
         counts=counts,
         unparsed=unparsed,
         new_offset=new_offset,
@@ -219,16 +293,20 @@ def ingest_paths_transactional(
     chunk_bytes: int = 1_048_576,
     rules: ErrorRules | None = None,
 ) -> RunResult:
-    """Como `ingest_paths`, pero con los cambios de DB en una transacción.
+    """Pasada de producción: inserción y offset atómicos **por lote**.
 
-    Es la forma de usar en producción: o queda registrada la pasada completa con
-    sus eventos, o no queda nada. Sin esto, un fallo a mitad deja `last_offset`
-    adelantado en un archivo y sin eventos, es decir, datos perdidos.
+    Antes se envolvía la pasada completa en una transacción; eso garantizaba
+    todo-o-nada a costa de mantener el lock de escritura durante la lectura y
+    el parseo de todos los archivos, y de acumular todas las filas en memoria.
+    Ahora la unidad atómica es el lote: cada uno inserta sus eventos y avanza
+    `last_offset` en la misma transacción. Un fallo solo deja pendiente el lote
+    en curso, nunca una fila con offset adelantado y sin eventos.
+
+    Se conserva el nombre para no romper a los llamadores (CLI, watcher,
+    dashboard y evals); la semántica de recuperación ya no depende de una
+    transacción global.
     """
-    from app.db.connection import transaction
-
-    with transaction(conn):
-        return ingest_paths(conn, registry, paths, chunk_bytes, rules)
+    return ingest_paths(conn, registry, paths, chunk_bytes, rules)
 
 
 __all__ = [

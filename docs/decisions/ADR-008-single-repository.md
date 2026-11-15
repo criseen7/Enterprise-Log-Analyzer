@@ -1,4 +1,4 @@
-# ADR-008 — Un solo repositorio, renombrado
+# ADR-008 — Un solo repositorio
 
 **Estado:** aceptada
 **Fecha:** 2026-10-21
@@ -14,18 +14,20 @@ Hay tres formas de organizarlas:
 
 | Opción | Estructura |
 |---|---|
-| **A** | Un repo: `criseen7/loglens` con todo dentro |
+| **A** | Un repo: `criseen7/Enterprise-Log-Analyzer` con todo dentro |
 | **B** | Dos repos: `Enterprise-Log-Analyzer` (motor) + `loglens-mcp` (MCP + agent + evals) |
 | **C** | Monorepo con paquetes publicables separados: `loglens-core`, `loglens-mcp`, `loglens-agent` |
 
 ## Decisión
 
-**Opción A: un solo repositorio, renombrado de `Enterprise-Log-Analyzer` a `loglens`.**
+**Opción A: un solo repositorio, `Enterprise-Log-Analyzer`, con todo dentro.**
+El producto se llama LogLens y el paquete Python sigue siendo `app/`; el
+repositorio conserva su nombre.
 
 Estructura interna:
 
 ```
-loglens/
+Enterprise-Log-Analyzer/
 ├── app/
 │   ├── config.py db/ ingest/ parser/ analysis/ alerts/ reports/ ui/   # motor
 │   ├── mcp/        # servidor MCP
@@ -34,9 +36,6 @@ loglens/
 ├── docs/
 └── tests/
 ```
-
-GitHub redirige automáticamente los enlaces antiguos tras el rename, así que el
-cambio no rompe ningún enlace existente.
 
 ## Razones
 
@@ -70,7 +69,7 @@ cambio no rompe ningún enlace existente.
 - Un solo badge de CI, una sola cobertura, una sola release.
 - El historial de commits cuenta una historia completa: motor → MCP → agente →
   evals → despliegue.
-- Publicar en PyPI es opcional: `pip install git+https://github.com/criseen7/loglens`
+- Publicar en PyPI es opcional: `pip install git+https://github.com/criseen7/Enterprise-Log-Analyzer`
   basta para el 95 % de los casos de uso.
 
 **En contra:**

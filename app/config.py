@@ -53,6 +53,10 @@ class IngestConfig:
     )
     poll_interval_seconds: float = field(default=5.0, metadata={"env": "ELA_POLL_INTERVAL_SECONDS"})
     debounce_seconds: float = field(default=2.0, metadata={"env": "ELA_DEBOUNCE_SECONDS"})
+    # Tope de espera aunque no llegue calma: con eventos cada 100 ms el debounce
+    # nunca vence y el lote no se procesaría hasta que el proceso pare. Al vencer
+    # este plazo se procesa lo acumulado y se reinicia la ventana.
+    max_latency_seconds: float = field(default=30.0, metadata={"env": "ELA_MAX_LATENCY_SECONDS"})
     chunk_bytes: int = field(default=1_048_576, metadata={"env": "ELA_CHUNK_BYTES"})
     default_timezone: str = field(default="UTC", metadata={"env": "ELA_DEFAULT_TIMEZONE"})
 
@@ -276,6 +280,8 @@ def _validate(settings: Settings) -> None:
         problems.append("ingest.chunk_bytes debe ser > 0")
     if settings.ingest.debounce_seconds < 0:
         problems.append("ingest.debounce_seconds no puede ser negativo")
+    if settings.ingest.max_latency_seconds <= 0:
+        problems.append("ingest.max_latency_seconds debe ser > 0")
     if not settings.ingest.include_patterns:
         problems.append("ingest.include_patterns no puede estar vacío")
 

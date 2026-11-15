@@ -57,8 +57,8 @@ loglens = "app.mcp.__main__:main"
 loglens-mcp = "app.mcp.__main__:main"
 
 [project.urls]
-Homepage = "https://github.com/criseen7/loglens"
-Issues = "https://github.com/criseen7/loglens/issues"
+Homepage = "https://github.com/criseen7/Enterprise-Log-Analyzer"
+Issues = "https://github.com/criseen7/Enterprise-Log-Analyzer/issues"
 
 [tool.setuptools.packages.find]
 include = ["app*"]

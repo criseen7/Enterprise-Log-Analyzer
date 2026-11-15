@@ -199,6 +199,36 @@ class TransactionTests(TempDbTestCase):
                 raise ValueError("boom")
         self.assertEqual(conn.execute("SELECT COUNT(*) FROM events").fetchone()[0], 0)
 
+    def test_commit_fallido_hace_rollback_y_deja_la_conexion_utilizable(self):
+        """Un COMMIT fallido no puede dejar una transacción abierta."""
+        conn = self.connect()
+
+        class CommitFallido:
+            """Proxy mínimo: delega todo menos el COMMIT, que falla una vez."""
+
+            def __init__(self, inner: sqlite3.Connection) -> None:
+                self._inner = inner
+
+            @property
+            def in_transaction(self) -> bool:
+                return self._inner.in_transaction
+
+            def execute(self, sql, *args, **kwargs):
+                if sql == "COMMIT":
+                    raise sqlite3.OperationalError("disk I/O error")
+                return self._inner.execute(sql, *args, **kwargs)
+
+        with self.assertRaises(sqlite3.OperationalError):
+            with transaction(CommitFallido(conn)):  # type: ignore[arg-type]
+                conn.execute("INSERT INTO events (file_id, offset, raw_line) VALUES (1, 1, 'x')")
+
+        self.assertFalse(conn.in_transaction, "el ROLLBACK debe cerrar la transacción")
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM events").fetchone()[0], 0)
+
+        with transaction(conn):
+            conn.execute("INSERT INTO events (file_id, offset, raw_line) VALUES (1, 2, 'ok')")
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM events").fetchone()[0], 1)
+
 
 class ContextManagerTests(TempDbTestCase):
     def test_connection_is_closed_on_exit(self):

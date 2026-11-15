@@ -3,7 +3,7 @@
 **A deterministic log-analysis engine exposed as an MCP server, with an agent
 layer that investigates and writes — but never decides what happened.**
 
-[![CI](https://github.com/criseen7/loglens/actions/workflows/ci.yml/badge.svg)](https://github.com/criseen7/loglens/actions/workflows/ci.yml)
+[![CI](https://github.com/criseen7/Enterprise-Log-Analyzer/actions/workflows/ci.yml/badge.svg)](https://github.com/criseen7/Enterprise-Log-Analyzer/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-3776ab.svg)](pyproject.toml)
 [![MCP](https://img.shields.io/badge/MCP-2.x-6b46c1.svg)](https://modelcontextprotocol.io)
@@ -183,8 +183,8 @@ engine that reads the logs — never hand-written.
 ## Quickstart
 
 ```bash
-git clone https://github.com/criseen7/loglens.git
-cd loglens
+git clone https://github.com/criseen7/Enterprise-Log-Analyzer.git
+cd Enterprise-Log-Analyzer
 
 python -m venv .venv && . .venv/bin/activate
 pip install -e ".[agent,dev]"

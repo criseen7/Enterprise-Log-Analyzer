@@ -57,7 +57,10 @@ def _bootstrap(settings: Settings) -> None:
     if not paths:
         return
 
-    registry = Registry.from_directory(settings.paths.patterns_dir)
+    registry = Registry.from_directory(
+        settings.paths.patterns_dir,
+        default_timezone=settings.ingest.default_timezone,
+    )
     rules = ErrorRules.load(settings.analysis.rules_path)
     with st.spinner(f"Ingiriendo {len(paths)} archivo(s) de {settings.paths.log_dir}…"):
         with connection() as conn:

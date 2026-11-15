@@ -7,13 +7,13 @@ no probaría nada de lo que importa aquí.
 
 from __future__ import annotations
 
+import io
 import os
 import sqlite3
 import unittest
 from pathlib import Path
 from unittest import mock
 
-from app.db import repository
 from app.db.connection import transaction
 from app.db.repository import (
     count_events,
@@ -26,7 +26,13 @@ from app.db.repository import (
     update_progress,
 )
 from app.ingest.ingestor import discover, ingest_file, ingest_paths, ingest_paths_transactional
-from app.ingest.reader import MAX_ENTRY_BYTES, TRUNCATION_NOTE, iter_entries, read_complete_lines
+from app.ingest.reader import (
+    MAX_ENTRY_BYTES,
+    TRUNCATION_NOTE,
+    iter_entries,
+    iter_entry_batches,
+    read_complete_lines,
+)
 from app.parser.registry import Registry
 from tests.helpers import PATTERNS_DIR, TempDbTestCase
 
@@ -183,15 +189,26 @@ class RotacionTest(IngestBase):
 
         nuevo = self.log_dir / "app.log"
         nuevo.write_text(WLS.format(n=2), encoding="utf-8")
-        stat_real = repository._stat
+        real_fstat = os.fstat
 
-        def stat_con_inodo_reciclado(p: Path) -> tuple[int | None, int]:
-            inode, size = stat_real(p)
-            if Path(p) == nuevo.resolve():
-                return inodo_viejo, size
-            return inode, size
+        def fstat_con_inodo_reciclado(fd: int) -> os.stat_result:
+            st = real_fstat(fd)
+            return os.stat_result(
+                (
+                    st.st_mode,
+                    inodo_viejo,
+                    st.st_dev,
+                    st.st_nlink,
+                    st.st_uid,
+                    st.st_gid,
+                    st.st_size,
+                    st.st_atime,
+                    st.st_mtime,
+                    st.st_ctime,
+                )
+            )
 
-        with mock.patch.object(repository, "_stat", side_effect=stat_con_inodo_reciclado):
+        with mock.patch("app.ingest.ingestor._fstat_fd", side_effect=fstat_con_inodo_reciclado):
             r = ingest_file(self.conn, nuevo, self.registry)
 
         self.assertEqual(r.reason, "recycled")
@@ -431,17 +448,24 @@ class ProgressGuardTests(IngestBase):
         self.assertEqual(last_offset(self.conn, state.file_id), 10)
 
     def test_rotacion_durante_la_lectura_conserva_la_identidad(self):
-        """El archivo nuevo no hereda el inodo ni el offset del anterior."""
-        self.append(WLS.format(n=1))
-        real_iter_entries = iter_entries
+        """Rotar entre resolver y leer no puede mezclar dos archivos.
 
-        def rotate_after_read(path, offset, registry, chunk_bytes):
-            entries, new_offset = real_iter_entries(path, offset, registry, chunk_bytes)
+        Es el TOCTOU que hacía inoperante la guarda anterior: se resolvía el
+        inode de `app.log`, se rotaba, y luego `open(path)` leía el archivo
+        nuevo mientras se actualizaba la fila del viejo. El lector ahora usa el
+        descriptor abierto *antes* de resolver, así que sigue leyendo el
+        contenido cuya identidad registró.
+        """
+        self.append(WLS.format(n=1))
+        real_resolve = resolve_log_file
+
+        def resolve_then_rotate(conn, path, **kwargs):
+            state = real_resolve(conn, path, **kwargs)
             os.rename(path, path.with_name("app.log.1"))
             path.write_text(WLS.format(n=2), encoding="utf-8")
-            return entries, new_offset
+            return state
 
-        with mock.patch("app.ingest.ingestor.iter_entries", side_effect=rotate_after_read):
+        with mock.patch("app.ingest.ingestor.resolve_log_file", side_effect=resolve_then_rotate):
             first = ingest_file(self.conn, self.log, self.registry)
 
         self.assertEqual(first.counts.inserted, 1)
@@ -460,6 +484,163 @@ class ProgressGuardTests(IngestBase):
         self.assertEqual(count_events(self.conn), 2, "no hay eventos duplicados ni perdidos")
         inodes = self.conn.execute("SELECT COUNT(DISTINCT inode) FROM log_files").fetchone()[0]
         self.assertEqual(inodes, 2, "cada archivo conserva su propia fila")
+
+
+class CopytruncateTest(IngestBase):
+    def test_copia_no_reingiere_el_prefijo_ya_ingerido(self):
+        """`cp app.log app.log.1` + truncar app.log no puede duplicar eventos.
+
+        La copia tiene un inode nuevo, así que por identidad parece un archivo
+        nuevo. Sin heredar el offset de la fila con la misma cabecera, se
+        releería todo el prefijo bajo otro `file_id`.
+        """
+        self.append(WLS.format(n=1) + WLS.format(n=2))
+        ingest_file(self.conn, self.log, self.registry)
+        self.assertEqual(count_events(self.conn), 2)
+
+        copia = self.log_dir / "app.log.1"
+        copia.write_bytes(self.log.read_bytes())  # cp
+        self.log.write_text("", encoding="utf-8")  # truncate
+        self.append(WLS.format(n=3))
+
+        ingest_paths(self.conn, self.registry, [self.log, copia])
+
+        self.assertEqual(count_events(self.conn), 3, "el prefijo copiado no se reingiere")
+        fila = self.conn.execute(
+            "SELECT last_offset FROM log_files WHERE path = ?", (str(copia.resolve()),)
+        ).fetchone()
+        self.assertIsNotNone(fila)
+        self.assertGreater(fila["last_offset"], 0, "la copia hereda el offset del original")
+
+
+class BatchReaderTest(IngestBase):
+    def test_lotes_respetan_el_limite_y_no_cortan_entradas(self):
+        self.append(
+            "".join(WLS.format(n=n) for n in range(1, 6))
+            + "Caused by: java.sql.SQLException: timeout\n"
+        )
+        with self.log.open("rb") as handle:
+            batches = list(iter_entry_batches(handle, 0, self.registry, max_entries=2))
+
+        self.assertTrue(all(len(batch) <= 2 for batch, _ in batches))
+        offsets = [entry.offset for batch, _ in batches for entry in batch]
+        self.assertEqual(offsets, sorted(offsets), "las entradas se emiten en orden")
+        self.assertEqual(len(offsets), 5)
+        self.assertEqual(batches[-1][1], self.log.stat().st_size)
+
+    def test_lote_por_bytes_tambien_acota(self):
+        self.append("".join(WLS.format(n=n) for n in range(1, 6)))
+        with self.log.open("rb") as handle:
+            batches = list(
+                iter_entry_batches(
+                    handle,
+                    0,
+                    self.registry,
+                    max_entries=1000,
+                    max_bytes=len(WLS.format(n=1).encode()) * 2,
+                )
+            )
+        self.assertGreater(len(batches), 1)
+
+
+class PartialCommitTest(IngestBase):
+    def test_fallo_en_un_lote_conserva_lo_confirmado(self):
+        """El offset solo avanza para los lotes que llegaron a insertarse."""
+        self.append("".join(WLS.format(n=n) for n in range(1, 4)))
+        real_batches = iter_entry_batches
+        real_insert = insert_events
+        calls = {"n": 0}
+
+        def one_entry_per_batch(handle, start_offset, registry, chunk_bytes):
+            return real_batches(handle, start_offset, registry, chunk_bytes, max_entries=1)
+
+        def insert_first_then_fail(conn, rows):
+            calls["n"] += 1
+            if calls["n"] == 2:
+                raise sqlite3.OperationalError("fallo simulado")
+            return real_insert(conn, rows)
+
+        with (
+            mock.patch(
+                "app.ingest.ingestor.iter_entry_batches",
+                side_effect=one_entry_per_batch,
+            ),
+            mock.patch(
+                "app.ingest.ingestor.insert_events",
+                side_effect=insert_first_then_fail,
+            ),
+            self.assertRaises(sqlite3.OperationalError),
+        ):
+            ingest_file(self.conn, self.log, self.registry)
+
+        self.assertEqual(count_events(self.conn), 1)
+        self.assertEqual(
+            resolve_log_file(self.conn, self.log).offset,
+            len(WLS.format(n=1)),
+            "el offset queda en el final del último lote confirmado",
+        )
+
+        run = ingest_file(self.conn, self.log, self.registry)
+        self.assertEqual(run.counts.inserted, 2, "la siguiente pasada reintenta el resto")
+        self.assertEqual(count_events(self.conn), 3)
+
+
+class TimezoneCliTest(TempDbTestCase):
+    def test_cli_aplica_default_timezone(self):
+        """El timestamp naive debe interpretarse en la zona configurada."""
+        from contextlib import redirect_stdout
+
+        from app.ingest.__main__ import main as ingest_main
+
+        log = self.log_dir / "app.log"
+        log.write_text(
+            '{"timestamp":"2026-10-05 08:03:22","level":"INFO","message":"naive"}\n',
+            encoding="utf-8",
+        )
+        config = self.root / "config.yaml"
+        config.write_text(
+            "paths:\n"
+            f"  log_dir: {self.log_dir}\n"
+            f"  db_path: {self.db_path}\n"
+            f"  export_dir: {self.export_dir}\n"
+            "ingest:\n"
+            "  default_timezone: America/Mexico_City\n",
+            encoding="utf-8",
+        )
+
+        with redirect_stdout(io.StringIO()):
+            code = ingest_main(["--once", "--config", str(config)])
+        self.assertEqual(code, 0)
+
+        conn = self.connect()
+        stamp = conn.execute("SELECT timestamp_utc FROM events").fetchone()[0]
+        self.assertEqual(stamp, "2026-10-05T14:03:22.000Z")
+
+
+class StatusCliTest(TempDbTestCase):
+    migrate_db = False
+
+    def test_status_no_migra_ni_crea_la_base(self):
+        from contextlib import redirect_stdout
+
+        from app.ingest.__main__ import main as ingest_main
+
+        config = self.root / "config.yaml"
+        config.write_text(
+            "paths:\n"
+            f"  log_dir: {self.log_dir}\n"
+            f"  db_path: {self.db_path}\n"
+            f"  export_dir: {self.export_dir}\n",
+            encoding="utf-8",
+        )
+
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = ingest_main(["--status", "--config", str(config)])
+
+        self.assertEqual(code, 0)
+        self.assertIn("sin migrar", out.getvalue())
+        self.assertFalse(self.db_path.exists(), "--status es de solo lectura")
 
 
 if __name__ == "__main__":
