@@ -6,8 +6,8 @@ All notable changes to LogLens are documented here. The format follows
 
 ## [0.1.0] — 2026-10-23
 
-First public release. The repository was renamed from `Enterprise-Log-Analyzer`
-to `loglens`; the Python package remains `app/`.
+First public release. The product is LogLens; the repository is
+`Enterprise-Log-Analyzer` and the Python package remains `app/`.
 
 ### Added
 
