@@ -149,8 +149,8 @@ python -m evals.dataset.build --verify
 ## Arranque rápido
 
 ```bash
-git clone https://github.com/criseen7/loglens.git
-cd loglens
+git clone https://github.com/criseen7/Enterprise-Log-Analyzer.git
+cd Enterprise-Log-Analyzer
 
 python -m venv .venv && . .venv/bin/activate
 pip install -e ".[agent,dev]"
