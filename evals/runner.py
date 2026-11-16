@@ -117,6 +117,7 @@ def _citations_payload(run: AgentRun) -> dict[str, list[dict[str, Any]]]:
         "valid": [claim.model_dump() for claim in report.valid],
         "invalid": [claim.model_dump() for claim in report.invalid],
         "uncited": [claim.model_dump() for claim in report.uncited],
+        "unsupported": [claim.model_dump() for claim in report.unsupported],
     }
 
 

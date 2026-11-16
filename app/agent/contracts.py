@@ -206,17 +206,27 @@ class CitationReport(BaseModel):
     valid: list[Claim] = Field(default_factory=list)
     invalid: list[Claim] = Field(default_factory=list)
     uncited: list[Claim] = Field(default_factory=list)
+    # Citan ids existentes, pero las cifras que afirman no aparecen en esa
+    # evidencia. Una cita válida sólo prueba existencia; esto comprueba algo
+    # más: que el número no lo haya inventado el modelo.
+    unsupported: list[Claim] = Field(default_factory=list)
 
     @property
     def fact_claims(self) -> list[Claim]:
-        return [c for c in [*self.valid, *self.invalid, *self.uncited] if c.kind == "fact"]
+        return [
+            c
+            for c in [*self.valid, *self.invalid, *self.uncited, *self.unsupported]
+            if c.kind == "fact"
+        ]
 
     @property
     def fact_failure_rate(self) -> float:
         facts = self.fact_claims
         if not facts:
             return 0.0
-        failed = [c for c in facts if c in self.invalid or c in self.uncited]
+        failed = [
+            c for c in facts if c in self.invalid or c in self.uncited or c in self.unsupported
+        ]
         return len(failed) / len(facts)
 
     @property

@@ -192,6 +192,19 @@ class MetricsTests(unittest.TestCase):
         self.assertEqual(metrics["evidence_citation_rate"], 0.0)
         self.assertFalse(metrics["targets_met"]["hallucination_rate"])
 
+    def test_una_cifra_no_sustentada_tambien_es_alucinacion(self):
+        result = self._result(
+            citations={
+                "valid": [],
+                "invalid": [],
+                "uncited": [],
+                "unsupported": [{"kind": "fact", "text": "300 errores"}],
+            }
+        )
+        metrics = aggregate([result])
+        self.assertEqual(metrics["hallucination_rate"], 0.5)
+        self.assertEqual(metrics["evidence_citation_rate"], 0.0)
+
     def test_atribuir_algo_prohibido_es_falsa_atribucion(self):
         result = self._result(
             diagnosis={

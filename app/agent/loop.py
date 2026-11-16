@@ -238,8 +238,9 @@ def investigate(
             valid=len(report.valid),
             invalid=len(report.invalid),
             uncited=len(report.uncited),
+            unsupported=len(report.unsupported),
             failure_rate=report.fact_failure_rate,
-            removed=[claim.text for claim in report.invalid],
+            removed=[claim.text for claim in [*report.invalid, *report.unsupported]],
         )
 
         # --- 6. GATE ---------------------------------------------------------
