@@ -25,11 +25,13 @@ from typing import Any
 from unittest import mock
 
 from mcp import Client
+from mcp.server.mcpserver.exceptions import ToolError
 
 from app import config
 from app.mcp import hitl
 from app.mcp.__main__ import main
 from app.mcp.server import build_server
+from app.mcp.tools._base import guard
 from tests.helpers import TempDbTestCase
 
 EXPECTED_TOOLS = {
@@ -894,6 +896,79 @@ class SecretTests(McpTestCase):
             with self.assertRaises(hitl.HitlError):
                 hitl.load_secret()
         self.assertEqual(target.read_bytes(), b"secreto ajeno")
+
+
+class WindowCapTests(McpTestCase):
+    """P1-4: ninguna ventana enumerada hora a hora puede crecer sin tope."""
+
+    def test_una_ventana_explicita_demasiado_grande_falla(self):
+        result = self.call(
+            "detect_anomalies",
+            {
+                "since": "2026-01-01T00:00:00Z",
+                "until": "2026-03-01T00:00:00Z",
+            },
+        )
+        self.assertTrue(result.is_error)
+        self.assertIn("demasiado grande", result.content[0].text)
+
+    def test_compare_windows_rechaza_un_rango_explicito_demasiado_grande(self):
+        self.add_event(ts="2026-01-01T00:00:00.000Z", message="pool", fingerprint="fp_span")
+        result = self.call(
+            "compare_windows",
+            {
+                "fingerprint": "fp_span",
+                "since": "2026-01-01T00:00:00Z",
+                "until": "2026-03-01T00:00:00Z",
+            },
+        )
+        self.assertTrue(result.is_error)
+        self.assertIn("demasiado grande", result.content[0].text)
+
+    def test_blast_radius_recorta_el_historico_derivado(self):
+        self.add_event(ts="2026-01-01T00:00:00.000Z", message="pool", fingerprint="fp_span")
+        self.add_event(ts="2026-03-01T00:00:00.000Z", message="pool", fingerprint="fp_span")
+
+        data = self.payload("blast_radius", {"fingerprint": "fp_span"})
+        self.assertLessEqual(len(data["timeline"]), 745)
+        self.assertGreaterEqual(len(data["timeline"]), 1)
+
+    def test_bounded_bounds_recorta_un_rango_abierto_al_tramo_reciente(self):
+        from datetime import timedelta
+
+        from app.mcp._context import bounded_bounds
+        from app.timeutil import parse_utc
+
+        self.add_event(ts="2026-01-01T00:00:00.000Z", message="pool", fingerprint="fp_span")
+        self.add_event(ts="2026-03-01T00:00:00.000Z", message="pool", fingerprint="fp_span")
+
+        lo, hi = bounded_bounds(self.conn, None, None)
+        self.assertIsNotNone(lo)
+        self.assertIsNotNone(hi)
+        lo_dt, hi_dt = parse_utc(lo), parse_utc(hi)
+        self.assertIsNotNone(lo_dt)
+        self.assertIsNotNone(hi_dt)
+        self.assertLessEqual(hi_dt - lo_dt, timedelta(days=31))
+
+
+class GuardTests(unittest.TestCase):
+    """P2: el mensaje al modelo no filtra detalles internos."""
+
+    def _boom(self, exc: Exception) -> str:
+        with self.assertRaises(ToolError) as ctx:
+            guard(lambda: (_ for _ in ()).throw(exc))
+        return str(ctx.exception)
+
+    def test_un_error_interno_no_filtra_tipo_ni_mensaje(self):
+        text = self._boom(RuntimeError("ruta secreta /etc/passwd"))
+        self.assertNotIn("RuntimeError", text)
+        self.assertNotIn("/etc/passwd", text)
+
+    def test_un_error_de_sqlite_no_filtra_el_esquema(self):
+        import sqlite3
+
+        text = self._boom(sqlite3.OperationalError("no such table: agent_secrets"))
+        self.assertNotIn("agent_secrets", text)
 
 
 class CliToolsTests(unittest.TestCase):

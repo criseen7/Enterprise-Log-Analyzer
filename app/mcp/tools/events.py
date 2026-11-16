@@ -18,7 +18,7 @@ from typing import TypedDict
 
 from app.analysis.anomalies import anomalies as detect
 from app.analysis.metrics import top_errors as engine_top_errors
-from app.mcp._context import read_connection, resolve_bounds
+from app.mcp._context import bounded_bounds, read_connection, resolve_bounds
 from app.mcp.schemas import (
     AnomaliesResult,
     AnomalyRecord,
@@ -329,7 +329,7 @@ def _anomalies(
         raise ValueError("z_threshold debe ser > 0")
     if min_samples < 0:
         raise ValueError("min_samples no puede ser negativo")
-    lo, hi = resolve_bounds(since, until)
+    lo, hi = bounded_bounds(conn, since, until)
     found = detect(
         conn,
         z_threshold=z_threshold,
