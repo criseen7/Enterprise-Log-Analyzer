@@ -467,6 +467,85 @@ class BackfillTest(AnalysisDbTest):
         self.assertNotEqual(huella, "huella-vieja")
         self.assertEqual(self.conn.execute("SELECT category FROM events").fetchone()[0], "timeout")
 
+    def test_recalc_remapea_el_incidente_a_la_huella_nueva(self):
+        file_id = self.seed_file()
+        self.add_event(
+            file_id,
+            "2026-10-05T10:00:00.000Z",
+            message="timeout de consulta",
+            fingerprint="huella-vieja",
+        )
+        self.conn.execute(
+            "INSERT INTO incidents (fingerprint, category, severity, sample_message,"
+            " first_seen, last_seen, event_count, status, notified_at, notified_through)"
+            " VALUES ('huella-vieja', 'timeout', 45, 'timeout de consulta',"
+            " '2026-10-05T10:00:00.000Z', '2026-10-05T10:00:00.000Z', 1,"
+            " 'ACKNOWLEDGED', '2026-10-05T10:01:00.000Z', '2026-10-05T10:00:00.000Z')"
+        )
+
+        backfill(self.conn, self.rules, recalc=True)
+
+        nueva = self.conn.execute("SELECT fingerprint FROM events").fetchone()[0]
+        rows = list(self.conn.execute("SELECT * FROM incidents"))
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["fingerprint"], nueva)
+        self.assertEqual(rows[0]["status"], "ACKNOWLEDGED")
+        self.assertEqual(rows[0]["event_count"], 1)
+        self.assertIsNone(
+            self.conn.execute(
+                "SELECT 1 FROM incidents WHERE fingerprint = 'huella-vieja'"
+            ).fetchone(),
+            "la huella vieja no puede quedar huérfana",
+        )
+
+    def test_recalc_fusiona_incidentes_que_colapsan_en_la_misma_huella(self):
+        file_id = self.seed_file()
+        self.add_event(
+            file_id,
+            "2026-10-05T10:00:00.000Z",
+            message="timeout de consulta",
+            fingerprint="vieja-a",
+        )
+        self.add_event(
+            file_id,
+            "2026-10-05T10:05:00.000Z",
+            message="timeout de consulta",
+            fingerprint="vieja-b",
+        )
+        self.conn.execute(
+            "INSERT INTO incidents (fingerprint, category, severity, sample_message,"
+            " first_seen, last_seen, event_count, status)"
+            " VALUES ('vieja-a', 'timeout', 45, 'timeout de consulta',"
+            " '2026-10-05T10:00:00.000Z', '2026-10-05T10:00:00.000Z', 1, 'RESOLVED')"
+        )
+        self.conn.execute(
+            "INSERT INTO incidents (fingerprint, category, severity, sample_message,"
+            " first_seen, last_seen, event_count, status)"
+            " VALUES ('vieja-b', 'timeout', 45, 'timeout de consulta',"
+            " '2026-10-05T10:05:00.000Z', '2026-10-05T10:05:00.000Z', 1, 'OPEN')"
+        )
+
+        backfill(self.conn, self.rules, recalc=True)
+
+        rows = list(self.conn.execute("SELECT * FROM incidents"))
+        self.assertEqual(len(rows), 1, "las dos huellas viejas colapsan en una")
+        self.assertEqual(rows[0]["status"], "OPEN", "el estado más accionable gana")
+        self.assertEqual(rows[0]["event_count"], 2)
+        self.assertEqual(rows[0]["first_seen"], "2026-10-05T10:00:00.000Z")
+        self.assertEqual(rows[0]["last_seen"], "2026-10-05T10:05:00.000Z")
+
+    def test_recalc_elimina_incidentes_sin_eventos(self):
+        self.conn.execute(
+            "INSERT INTO incidents (fingerprint, category, severity, sample_message,"
+            " first_seen, last_seen, event_count, status)"
+            " VALUES ('fantasma', 'x', 45, 'x', '2026-10-05T10:00:00.000Z',"
+            " '2026-10-05T10:00:00.000Z', 1, 'OPEN')"
+        )
+
+        backfill(self.conn, self.rules, recalc=True)
+
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM incidents").fetchone()[0], 0)
+
     def test_batch_size_invalido(self):
         with self.assertRaises(ValueError):
             backfill(self.conn, self.rules, batch_size=0)
