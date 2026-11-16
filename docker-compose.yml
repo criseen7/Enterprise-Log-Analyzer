@@ -47,12 +47,15 @@ services:
         # segundo chocaría con el UNIQUE de `schema_version`.
         condition: service_healthy
     ports:
-      - "8501:8501"
+      # Sólo loopback: el dashboard no tiene autenticación propia.
+      - "127.0.0.1:8501:8501"
     environment:
       ELA_PROJECT_ROOT: /app
       ELA_LOG_DIR: /logs
       ELA_DB_PATH: /data/app.db
       ELA_EXPORT_DIR: /exports
+      # 0 = sólo lectura. Las escrituras del dashboard son opt-in explícito.
+      ELA_ADMIN_MODE: ${ELA_ADMIN_MODE:-0}
     volumes:
       - ./logs:/logs:ro
       - ela-data:/data
