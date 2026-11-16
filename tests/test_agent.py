@@ -13,6 +13,7 @@ falla, el proyecto entero deja de tener sentido.
 from __future__ import annotations
 
 import json
+import os
 import pathlib
 import unittest
 
@@ -567,6 +568,41 @@ class TraceRecorderTests(AgentFixture):
         path = self.trace_dir / "run-1_ok.jsonl"
         self.assertTrue(path.is_file())
         self.assertEqual(json.loads(path.read_text(encoding="utf-8"))["kind"], "run.start")
+
+    def test_redacta_secretos_en_payloads_anidados(self):
+        with TraceRecorder("run-redact", directory=self.trace_dir) as recorder:
+            recorder.record(
+                "llm.call",
+                api_key="sk-live-123",
+                nested={"confirm_token": "abc", "ok": "visible"},
+                items=[{"password": "hunter2"}],
+            )
+        line = json.loads((self.trace_dir / "run-redact.jsonl").read_text(encoding="utf-8"))
+        self.assertEqual(line["api_key"], "[REDACTED]")
+        self.assertEqual(line["nested"]["confirm_token"], "[REDACTED]")
+        self.assertEqual(line["nested"]["ok"], "visible")
+        self.assertEqual(line["items"][0]["password"], "[REDACTED]")
+
+    def test_no_sigue_un_symlink_en_el_directorio_de_trazas(self):
+        self.trace_dir.mkdir(parents=True, exist_ok=True)
+        target = self.root / "fuera.jsonl"
+        target.write_text("intacto\n", encoding="utf-8")
+        try:
+            (self.trace_dir / "run-sym.jsonl").symlink_to(target)
+        except (OSError, NotImplementedError):
+            self.skipTest("el sistema no admite symlinks")
+
+        with self.assertRaises(ValueError):
+            TraceRecorder("run-sym", directory=self.trace_dir)
+        self.assertEqual(target.read_text(encoding="utf-8"), "intacto\n")
+
+    def test_la_traza_y_su_directorio_son_privados(self):
+        with TraceRecorder("run-perms", directory=self.trace_dir) as recorder:
+            recorder.record("run.start", symptom="x")
+        if os.name == "nt":
+            self.skipTest("permisos POSIX no aplicables")
+        self.assertEqual(self.trace_dir.stat().st_mode & 0o777, 0o700)
+        self.assertEqual((self.trace_dir / "run-perms.jsonl").stat().st_mode & 0o777, 0o600)
 
 
 class LlmHelpersTests(unittest.TestCase):
