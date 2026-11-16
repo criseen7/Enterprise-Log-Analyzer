@@ -41,6 +41,11 @@ PLANNABLE_TOOLS = {
 
 DEFAULT_MODEL = "claude-sonnet-4-5"
 WINDOW_HOURS = 1
+TOP_FINGERPRINT = "$top_fingerprint"
+
+# Tools cuyo resultado puede fijar `$top_fingerprint`. `search_events` devuelve
+# eventos, no un ranking de huellas: no es un productor.
+FINGERPRINT_PRODUCERS = {"top_errors"}
 
 _catalog_cache: list[dict[str, Any]] | None = None
 
@@ -137,21 +142,21 @@ def heuristic_plan(
             step_id=3,
             hypothesis="Decidir si el volumen es nuevo, elevado o estable frente al baseline.",
             tool="compare_windows",
-            params={"fingerprint": "$top_fingerprint", **window},
+            params={"fingerprint": TOP_FINGERPRINT, **window},
             depends_on=[2],
         ),
         PlanStep(
             step_id=4,
             hypothesis="Delimitar servicios afectados y si el fallo se propaga en cascada.",
             tool="blast_radius",
-            params={"fingerprint": "$top_fingerprint", **window},
+            params={"fingerprint": TOP_FINGERPRINT, **window},
             depends_on=[2],
         ),
         PlanStep(
             step_id=5,
             hypothesis="Traducir la huella a una frase legible con ejemplos reales.",
             tool="explain_fingerprint",
-            params={"fingerprint": "$top_fingerprint"},
+            params={"fingerprint": TOP_FINGERPRINT},
             depends_on=[2],
         ),
     ][:max_steps]
@@ -169,8 +174,57 @@ def heuristic_plan(
     )
 
 
-def parse_plan(payload: dict[str, Any] | str) -> Plan:
-    """Valida el JSON del modelo contra `Plan` y la lista blanca de tools."""
+def _uses_top_fingerprint(value: Any) -> bool:
+    if value == TOP_FINGERPRINT:
+        return True
+    if isinstance(value, dict):
+        return any(_uses_top_fingerprint(item) for item in value.values())
+    if isinstance(value, list):
+        return any(_uses_top_fingerprint(item) for item in value)
+    return False
+
+
+def ensure_fingerprint_dependencies(plan: Plan) -> Plan:
+    """Añade la arista `depends_on` que el planner olvidó declarar.
+
+    Que un productor aparezca antes en la lista no basta: los pasos sin
+    dependencias se ejecutan en la misma ola. Sin la arista, el consumidor
+    resuelve `$top_fingerprint` antes de que el productor termine, o elige la
+    huella del productor que acabe primero. La dependencia se añade a *todos*
+    los productores anteriores para que el resultado no dependa del scheduling.
+
+    Lanza `ValueError` para que un plan del modelo con esta forma inválida se
+    trate como plan rechazado y se reintente, no como una corrida rota.
+    """
+    produced: list[PlanStep] = []
+    steps: list[PlanStep] = []
+    for step in plan.steps:
+        if _uses_top_fingerprint(step.params):
+            producers = [
+                producer.step_id for producer in produced if producer.tool in FINGERPRINT_PRODUCERS
+            ]
+            if not producers:
+                raise ValueError(
+                    f"el paso {step.step_id} usa {TOP_FINGERPRINT} sin un paso previo "
+                    f"que lo produzca ({', '.join(sorted(FINGERPRINT_PRODUCERS))})"
+                )
+            missing = [producer for producer in producers if producer not in step.depends_on]
+            if missing:
+                step = step.model_copy(update={"depends_on": [*step.depends_on, *missing]})
+        steps.append(step)
+        produced.append(step)
+    if steps == plan.steps:
+        return plan
+    return plan.model_copy(update={"steps": steps})
+
+
+def parse_plan(payload: dict[str, Any] | str, *, max_steps: int | None = None) -> Plan:
+    """Valida el JSON del modelo contra `Plan` y la lista blanca de tools.
+
+    `max_steps` es el límite del llamador. Se aplica después de parsear porque
+    el `max_steps` que trae el JSON lo escribió el mismo modelo al que se está
+    limitando.
+    """
     if isinstance(payload, str):
         try:
             data = json.loads(payload)
@@ -179,6 +233,7 @@ def parse_plan(payload: dict[str, Any] | str) -> Plan:
     else:
         data = payload
     plan = Plan.model_validate(data)
+    plan = ensure_fingerprint_dependencies(plan)
     plan.validate_shape(PLANNABLE_TOOLS, max_steps=max_steps)
     if max_steps is not None:
         plan = plan.model_copy(update={"max_steps": max_steps})
@@ -261,9 +316,12 @@ def plan_with_fallback(
 
 __all__ = [
     "DEFAULT_MODEL",
+    "FINGERPRINT_PRODUCERS",
     "PLANNABLE_TOOLS",
+    "TOP_FINGERPRINT",
     "catalog_for_prompt",
     "default_window",
+    "ensure_fingerprint_dependencies",
     "heuristic_plan",
     "llm_plan",
     "parse_plan",

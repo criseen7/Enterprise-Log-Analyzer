@@ -234,6 +234,63 @@ class ExecutorTests(AgentFixture):
         with self.assertRaises(executor.ExecutionError):
             executor.execute_plan(plan)
 
+    def test_la_arista_del_productor_se_anade_aunque_el_plan_la_omita(self):
+        plan = Plan(
+            symptom="x",
+            restatement="x",
+            steps=[
+                PlanStep(step_id=1, hypothesis="Buscar.", tool="top_errors", params={"limit": 5}),
+                PlanStep(
+                    step_id=2,
+                    hypothesis="Comparar.",
+                    tool="compare_windows",
+                    params={"fingerprint": executor.TOP_FINGERPRINT},
+                ),
+            ],
+        )
+        normalized = executor.ensure_fingerprint_dependencies(plan)
+        self.assertEqual(normalized.steps[1].depends_on, [1])
+        bundle = executor.execute_plan(plan)
+        self.assertIn("cmp:fp_pool", bundle.by_id)
+
+    def test_la_arista_cubre_todos_los_productores_paralelos(self):
+        plan = Plan(
+            symptom="x",
+            restatement="x",
+            steps=[
+                PlanStep(step_id=1, hypothesis="Buscar A.", tool="top_errors", params={"limit": 5}),
+                PlanStep(step_id=2, hypothesis="Buscar B.", tool="top_errors", params={"limit": 5}),
+                PlanStep(
+                    step_id=3,
+                    hypothesis="Comparar.",
+                    tool="compare_windows",
+                    params={"fingerprint": executor.TOP_FINGERPRINT},
+                ),
+            ],
+        )
+        normalized = executor.ensure_fingerprint_dependencies(plan)
+        self.assertEqual(normalized.steps[2].depends_on, [1, 2])
+
+    def test_la_huella_principal_no_depende_del_orden_de_llegada(self):
+        bundle = EvidenceBundle()
+        bundle.add(
+            EvidenceItem(
+                evidence_id="fp:zzz",
+                kind="fingerprint",
+                summary="segunda",
+                fields={"rank": 2},
+            )
+        )
+        bundle.add(
+            EvidenceItem(
+                evidence_id="fp:aaa",
+                kind="fingerprint",
+                summary="primera",
+                fields={"rank": 1},
+            )
+        )
+        self.assertEqual(executor._State(bundle).top_fingerprint, "aaa")
+
 
 class ExecutorContractTests(AgentFixture):
     """El ejecutor lee las claves que publica el schema, no las que recuerda.
@@ -511,6 +568,30 @@ class LoopWithModelTests(AgentFixture):
         )
         run = investigate("checkout falla", llm=llm, trace_dir=self.trace_dir)
         self.assertEqual(run.status, "OK", run.error)
+        self.assertTrue(
+            any("plan del modelo inválido" in gap for gap in run.diagnosis.evidence_gaps)
+        )
+
+    def test_un_placeholder_sin_productor_hace_caer_a_la_heuristica(self):
+        bad_plan = json.dumps(
+            {
+                "symptom": "checkout falla",
+                "restatement": "checkout falla",
+                "max_steps": 8,
+                "steps": [
+                    {
+                        "step_id": 1,
+                        "hypothesis": "Comparar una huella que nadie buscó.",
+                        "tool": "compare_windows",
+                        "params": {"fingerprint": executor.TOP_FINGERPRINT},
+                    }
+                ],
+            }
+        )
+        llm = NullClient(responses=[bad_plan, bad_plan, _diagnosis_payload()])
+        run = investigate("checkout falla", llm=llm, trace_dir=self.trace_dir)
+        self.assertEqual(run.status, "OK", run.error)
+        self.assertEqual(run.plan.steps[0].tool, "system_health")
         self.assertTrue(
             any("plan del modelo inválido" in gap for gap in run.diagnosis.evidence_gaps)
         )

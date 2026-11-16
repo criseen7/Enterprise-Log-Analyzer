@@ -30,7 +30,12 @@ from app.agent.contracts import (
     EvidenceBundle,
     Plan,
 )
-from app.agent.executor import call_tool, execute_plan, seed_health
+from app.agent.executor import (
+    call_tool,
+    ensure_fingerprint_dependencies,
+    execute_plan,
+    seed_health,
+)
 from app.agent.llm import LLMClient, LLMUnavailable
 from app.agent.planner import DEFAULT_MODEL, heuristic_plan, plan_with_fallback
 from app.agent.synthesis import synthesize_fallback, synthesize_llm
@@ -151,6 +156,7 @@ def investigate(
             symptom, llm=llm, health=health, model=model, max_steps=max_steps
         )
         plan = _prune(plan, drop_tools)
+        plan = ensure_fingerprint_dependencies(plan)
         for response in plan_responses:
             tokens_in += response.tokens_in
             tokens_out += response.tokens_out
