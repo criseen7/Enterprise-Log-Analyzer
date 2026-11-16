@@ -12,10 +12,13 @@ las three cosas que pueden invalidar una corrida:
 
 from __future__ import annotations
 
+import argparse
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from evals.dataset.build import (
     DEFAULT_PATH,
@@ -241,6 +244,38 @@ class ResultFileTests(unittest.TestCase):
         payload = json.loads(json.dumps(result, default=str))
         self.assertEqual(payload["case_id"], case["id"])
         self.assertIn("metrics", {"metrics": aggregate([result])})
+
+
+class EvalClientSelectionTests(unittest.TestCase):
+    """La corrida con modelo no puede degradar a heurístico en silencio."""
+
+    def _args(self, plan: str) -> argparse.Namespace:
+        return argparse.Namespace(plan=plan, model="claude-sonnet-4-5")
+
+    def test_con_clave_pero_sin_paquete_anthropic_falla(self):
+        from evals import run as evals_run
+
+        with (
+            mock.patch.dict(os.environ, {"ANTHROPIC_API_KEY": "sk-test"}),
+            mock.patch("evals.run.importlib.util.find_spec", return_value=None),
+        ):
+            with self.assertRaises(SystemExit) as ctx:
+                evals_run._make_client(self._args("llm"))
+        self.assertEqual(ctx.exception.code, 2)
+
+    def test_sin_clave_el_modo_modelo_es_un_skip(self):
+        from evals import run as evals_run
+
+        with mock.patch.dict(os.environ, {"ANTHROPIC_API_KEY": ""}):
+            with self.assertRaises(SystemExit) as ctx:
+                evals_run._make_client(self._args("llm"))
+        self.assertEqual(ctx.exception.code, 0)
+
+    def test_el_plan_heuristico_no_necesita_clave_ni_paquete(self):
+        from evals import run as evals_run
+
+        with mock.patch.dict(os.environ, {"ANTHROPIC_API_KEY": ""}):
+            self.assertEqual(evals_run._make_client(self._args("heuristic")), (None, "heuristic"))
 
 
 if __name__ == "__main__":

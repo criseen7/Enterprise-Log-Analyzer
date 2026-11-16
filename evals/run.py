@@ -7,13 +7,17 @@ Salidas:
 
 Sin `ANTHROPIC_API_KEY`, una corrida que necesita modelo termina en `SKIPPED`
 con código 0 y un mensaje explícito. Nunca en verde falso: un skip se imprime
-como skip y no escribe resultados.
+como skip y no escribe resultados. Con clave pero sin el paquete `anthropic`
+la corrida **falla**: degradar a fallback heurístico produciría métricas de
+modelo que nunca ocurrieron.
 """
 
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
+import os
 import sys
 import time
 from datetime import UTC, datetime
@@ -80,6 +84,13 @@ def _make_client(args: argparse.Namespace) -> tuple[Any, str]:
     """Devuelve `(cliente, estado)`; estado `"heuristic"` o `"llm"`."""
     if args.plan == "heuristic":
         return None, "heuristic"
+    if os.environ.get("ANTHROPIC_API_KEY") and importlib.util.find_spec("anthropic") is None:
+        print(
+            "ERROR: ANTHROPIC_API_KEY está definida pero falta el paquete 'anthropic'. "
+            "Instala las dependencias de eval: pip install -r requirements-evals.txt",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
     try:
         client = build_client(args.model)
     except LLMUnavailable as exc:

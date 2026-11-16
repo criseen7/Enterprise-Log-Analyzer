@@ -1,0 +1,7 @@
+# Dependencias de los jobs de evals.
+#
+# `anthropic` es un extra opcional del paquete, pero el harness de evaluación
+# lo necesita instalado: si falta, la corrida con modelo no debe degradar al
+# sintetizador heurístico en silencio. El pin mantiene reproducible el gate.
+-r requirements.txt
+anthropic==2.8.0
