@@ -5,9 +5,12 @@ plan de ejecución de las consultas están a la vista. Un dashboard que pide que
 confíes en sus números sin dejar auditarlos es indistinguible de uno que los
 inventa.
 
-Las acciones (ingerir, backfill) escriben en la base. Se ejecutan dentro de una
-transacción y **después** se limpia la caché: sin eso, el dashboard seguiría
-mostrando los números anteriores y parecería que el botón no hizo nada.
+Las acciones (ingerir, backfill, reclasificar) escriben en la base y sólo se
+habilitan con `ui.admin_mode`. Cada una exige escribir una palabra de
+confirmación antes de que el botón deje de estar deshabilitado, y queda
+registrada en el logger de auditoría. Se ejecutan dentro de una transacción y
+**después** se limpia la caché: sin eso, el dashboard seguiría mostrando los
+números anteriores y parecería que el botón no hizo nada.
 """
 
 from __future__ import annotations
@@ -22,8 +25,8 @@ from app.db.migrations import applied_versions
 from app.db.repository import count_events
 from app.ingest.ingestor import discover, ingest_paths_transactional, summarize
 from app.parser.registry import Registry
-from app.ui import cache, data
-from app.ui.components import tables
+from app.ui import audit, cache, data
+from app.ui.components import confirm, tables
 from app.ui.data import EventFilters
 from app.ui.theme import format_int
 
@@ -83,6 +86,8 @@ def render(selected: EventFilters) -> None:
                     f"cooldown_minutes      : {settings.analysis.cooldown_minutes}",
                     f"anomaly_zscore        : {settings.analysis.anomaly_zscore}",
                     f"anomaly_min_samples   : {settings.analysis.anomaly_min_samples}",
+                    f"max_window_days       : {settings.analysis.max_window_days}",
+                    f"admin_mode            : {settings.ui.admin_mode}",
                 ]
             ),
             language="text",
@@ -90,32 +95,61 @@ def render(selected: EventFilters) -> None:
 
     st.divider()
     st.subheader("Acciones")
-    st.caption(
-        "Escrituras sobre la base. La ingesta es idempotente: pulsar de nuevo "
-        "inserta 0 eventos si no hay líneas nuevas."
-    )
+    admin = settings.ui.admin_mode
+    if admin:
+        st.caption(
+            "Escrituras sobre la base. Cada acción exige escribir su palabra de "
+            "confirmación. La ingesta es idempotente: pulsar de nuevo inserta 0 "
+            "eventos si no hay líneas nuevas."
+        )
+    else:
+        st.info(
+            "Dashboard en **sólo lectura**. Para habilitar ingesta, relleno y "
+            "reclasificación, arranca con `ELA_ADMIN_MODE=1` (o "
+            "`ui.admin_mode: true`). Cada escritura queda auditada.",
+            icon="🔒",
+        )
     ingest_col, backfill_col, recalc_col, cache_col = st.columns(4)
-    if ingest_col.button("Ingerir ahora", use_container_width=True):
+    ingest_ok = (
+        confirm.typed_confirmation(ingest_col, word="INGERIR", key="confirm_ingest")
+        if admin
+        else False
+    )
+    if ingest_col.button("Ingerir ahora", use_container_width=True, disabled=not ingest_ok):
         with st.spinner("Leyendo logs…"):
             message = _run_ingest()
+        audit.record("ingest", detail=message)
         cache.clear_caches()
         st.success(message)
         st.rerun()
-    if backfill_col.button("Rellenar huellas", use_container_width=True):
+    backfill_ok = (
+        confirm.typed_confirmation(backfill_col, word="RELLENAR", key="confirm_backfill")
+        if admin
+        else False
+    )
+    if backfill_col.button("Rellenar huellas", use_container_width=True, disabled=not backfill_ok):
         rules = ErrorRules.load(settings.analysis.rules_path)
         with connection() as conn:
             touched = backfill(conn, rules)
+        audit.record("backfill", touched=touched)
         cache.clear_caches()
         st.success(f"eventos rellenados: {format_int(touched)}")
         st.rerun()
+    recalc_ok = (
+        confirm.typed_confirmation(recalc_col, word="RECLASIFICAR", key="confirm_recalc")
+        if admin
+        else False
+    )
     if recalc_col.button(
         "Reclasificar todo",
         use_container_width=True,
+        disabled=not recalc_ok,
         help="--recalc: reescribe la categoría de todos los eventos",
     ):
         rules = ErrorRules.load(settings.analysis.rules_path)
         with connection() as conn:
             touched = backfill(conn, rules, recalc=True)
+        audit.record("reclassify", touched=touched)
         cache.clear_caches()
         st.success(f"eventos reclasificados: {format_int(touched)}")
         st.rerun()

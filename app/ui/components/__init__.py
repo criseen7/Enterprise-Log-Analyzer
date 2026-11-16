@@ -5,6 +5,6 @@ re-exportar cada función: con re-exports, un nombre duplicado entre módulos pa
 desapercibido y el que gana depende del orden de import.
 """
 
-from app.ui.components import charts, filters, kpis, tables
+from app.ui.components import charts, confirm, filters, kpis, tables
 
-__all__ = ["charts", "filters", "kpis", "tables"]
+__all__ = ["charts", "confirm", "filters", "kpis", "tables"]

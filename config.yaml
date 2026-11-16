@@ -49,6 +49,9 @@ analysis:
   anomaly_zscore: 3.0
   # Mínimo de eventos por bucket para que la anomalía sea estadísticamente válida.
   anomaly_min_samples: 5
+  # Tope de las ventanas que se enumeran hora a hora (días). Un rango explícito
+  # que lo exceda falla; uno derivado se recorta al tramo más reciente.
+  max_window_days: 31
 
 ui:
   page_title: "Enterprise Log Analyzer"
@@ -56,3 +59,6 @@ ui:
   # TTL de la caché de queries del dashboard.
   cache_ttl_seconds: 30
   default_page_size: 100
+  # false = dashboard de sólo lectura. Las acciones que escriben (ingerir,
+  # reclasificar, evaluar incidentes) quedan ocultas salvo que se active.
+  admin_mode: false

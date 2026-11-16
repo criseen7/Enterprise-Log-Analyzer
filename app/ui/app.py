@@ -11,10 +11,11 @@ Estructura del archivo, y el orden importa:
    de pestaña los reiniciaría y obligaría a repetir el mismo clic por gráfico.
 4. `st.navigation(...).run()` — cada página es un `render(filtros)`.
 
-El dashboard **sólo lee**: `read_only=True` en todas las consultas. Las únicas
-escrituras (ingerir, backfill) las dispara el usuario desde Settings, que es
-donde se esperan. Eso es lo que permite en la Fase 6 separar `analyzer` y
-`dashboard` en procesos distintos sin cambiar una línea.
+El dashboard **lee por defecto**: `read_only=True` en todas las consultas y el
+auto-seed no corre. Las escrituras (ingerir, backfill) sólo se habilitan con
+`ui.admin_mode` y se confirman con una palabra tipada desde Settings o Incidents.
+Eso es lo que permite en la Fase 6 separar `analyzer` y `dashboard` en procesos
+distintos sin que el dashboard escriba por su cuenta.
 """
 
 from __future__ import annotations
@@ -38,13 +39,16 @@ from app.ui.views import settings as settings_page
 
 
 def _bootstrap(settings: Settings) -> None:
-    """Migra el esquema y auto-siembra si la base está vacía.
+    """Migra el esquema y, en modo admin, auto-siembra si la base está vacía.
 
-    El auto-seed corre una sola vez por sesión y sólo si hay archivos que
-    ingerir. No se ingiere en cada render: sería una escritura por interacción,
-    justo lo que el diseño evita (un solo escritor, y es el watcher).
+    El auto-seed es una escritura, así que sólo corre con `ui.admin_mode`. En
+    un despliegue normal el único escritor es el watcher; el dashboard que
+    arranca no debe ingerir por su cuenta. Tampoco corre en cada render: sería
+    una escritura por interacción.
     """
     migrate(settings.paths.db_path)
+    if not settings.ui.admin_mode:
+        return
     if st.session_state.get("ela_bootstrapped"):
         return
     st.session_state["ela_bootstrapped"] = True
@@ -82,7 +86,11 @@ def _sidebar_footer() -> None:
                 f"{format_int(stats['events'])} eventos · "
                 f"{stats['first_ts'][:10]} → {stats['last_ts'][:10]} UTC"
             )
-        st.caption("Datos en UTC · el dashboard lee, nunca escribe.")
+        st.caption(
+            "Datos en UTC · modo administración: las acciones confirmadas escriben."
+            if get_settings().ui.admin_mode
+            else "Datos en UTC · dashboard en sólo lectura."
+        )
 
 
 def main() -> None:
