@@ -11,8 +11,10 @@ el código: en un despliegue real se ajustan sin tocar la aplicación.
 
 Esta página es la única del dashboard que **escribe** además de leer: abrir el
 incidente (evaluar) y mover su estado (OPEN/ACK/RESOLVED) son acciones del
-usuario. Las lecturas siguen con `read_only=True`; las escrituras van por
-`connection()` y limpian la caché, igual que en Settings.
+usuario. Esas acciones sólo están habilitadas con `ui.admin_mode`, exigen una
+palabra de confirmación y quedan registradas en la auditoría. Las lecturas
+siguen con `read_only=True`; las escrituras van por `connection()` y limpian la
+caché, igual que en Settings.
 """
 
 from __future__ import annotations
@@ -24,8 +26,8 @@ from app.alerts.incidents import set_incident_status, status_label
 from app.config import get_settings
 from app.db.connection import connection
 from app.reports import export_incidents_csv, export_incidents_html
-from app.ui import cache
-from app.ui.components import charts, filters, kpis, tables
+from app.ui import audit, cache
+from app.ui.components import charts, confirm, filters, kpis, tables
 from app.ui.data import EventFilters
 from app.ui.theme import format_int, shorten
 
@@ -65,6 +67,12 @@ def _evaluate_now() -> None:
     """Evalúa la ventana y hace upsert de incidentes. Es una escritura."""
     with connection() as conn:
         result = evaluate_incidents(conn)
+    audit.record(
+        "incident.evaluate",
+        evaluated=bool(result["evaluated"]),
+        upserted=result["upserted"],
+        window_minutes=result["window_minutes"],
+    )
     cache.clear_caches()
     if result["evaluated"]:
         st.success(
@@ -96,36 +104,40 @@ def _manage(incidents: list[dict]) -> None:
     )
     row = next(r for r in incidents if r["id"] == chosen)
     current = row["status"]
+    manage_ok = confirm.typed_confirmation(st, word="CONFIRMAR", key="confirm_incident_status")
 
     left, middle, right = st.columns(3)
     if left.button(
         "Reconocer (ACK)",
         use_container_width=True,
-        disabled=current == "ACKNOWLEDGED",
+        disabled=not manage_ok or current == "ACKNOWLEDGED",
         help="Marca el incidente como visto sin cerrarlo.",
     ):
         with connection() as conn:
             set_incident_status(conn, chosen, "ACKNOWLEDGED")
+        audit.record("incident.status", incident_id=chosen, status="ACKNOWLEDGED")
         cache.clear_caches()
         st.rerun()
     if middle.button(
         "Resolver",
         use_container_width=True,
-        disabled=current == "RESOLVED",
+        disabled=not manage_ok or current == "RESOLVED",
         help="Cierra el incidente. Un rebrote posterior lo reabrirá como nuevo.",
     ):
         with connection() as conn:
             set_incident_status(conn, chosen, "RESOLVED")
+        audit.record("incident.status", incident_id=chosen, status="RESOLVED")
         cache.clear_caches()
         st.rerun()
     if right.button(
         "Reabrir (OPEN)",
         use_container_width=True,
-        disabled=current == "OPEN",
+        disabled=not manage_ok or current == "OPEN",
         help="Reabre y reinicia el cooldown: la próxima ocurrencia vuelve a notificar.",
     ):
         with connection() as conn:
             set_incident_status(conn, chosen, "OPEN")
+        audit.record("incident.status", incident_id=chosen, status="OPEN")
         cache.clear_caches()
         st.rerun()
 
@@ -169,9 +181,16 @@ def render(selected: EventFilters) -> None:
         "ocurrencia vuelva a notificar."
     )
     action_left, action_right = st.columns([1, 2])
+    admin = settings.ui.admin_mode
+    evaluate_ok = (
+        confirm.typed_confirmation(action_left, word="EVALUAR", key="confirm_evaluate")
+        if admin
+        else False
+    )
     if action_left.button(
         "Evaluar ahora",
         use_container_width=True,
+        disabled=not evaluate_ok,
         help="Recorre la ventana y abre/actualiza incidentes por fingerprint.",
     ):
         _evaluate_now()
@@ -180,7 +199,15 @@ def render(selected: EventFilters) -> None:
 
     incidents = cache.incidents()
     tables.incidents_table(incidents)
-    _manage(incidents)
+    if admin:
+        _manage(incidents)
+    else:
+        st.info(
+            "La gestión de estados está deshabilitada: el dashboard está en "
+            "**sólo lectura**. Actívala con `ELA_ADMIN_MODE=1` (o "
+            "`ui.admin_mode: true`).",
+            icon="🔒",
+        )
 
     st.divider()
     analysis = settings.analysis

@@ -54,9 +54,15 @@ def guard(fn: Callable[..., T], *args: Any, **kwargs: Any) -> T:
     except ValueError as exc:
         raise ToolError(str(exc)) from exc
     except sqlite3.Error as exc:
-        raise ToolError(f"error de base de datos: {exc}") from exc
+        # El detalle de SQLite puede incluir rutas y esquema; el modelo no lo
+        # necesita para corregir la llamada y el cliente no debe recibirlo.
+        raise ToolError("error de base de datos: la consulta no se pudo completar") from exc
     except Exception as exc:
-        raise ToolError(f"fallo inesperado ({type(exc).__name__}): {exc}") from exc
+        # Cualquier otra excepción es un fallo interno: se registra en la
+        # cadena (`from exc`) pero al modelo sólo le llega un mensaje estable.
+        raise ToolError(
+            "fallo inesperado en la tool; revisa los parámetros o los logs del servidor"
+        ) from exc
 
 
 __all__ = ["MUTATING", "READ_ONLY", "guard"]

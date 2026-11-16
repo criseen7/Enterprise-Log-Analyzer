@@ -1,3 +1,4 @@
+import csv
 import io
 import unittest
 from contextlib import redirect_stdout
@@ -166,6 +167,34 @@ class AlertsTests(UiDataTestCase):
         csv_bytes = export_incidents_csv(self.conn)
         self.assertTrue(csv_bytes.startswith(b"\xef\xbb\xbf"))
         self.assertTrue(csv_bytes.decode("utf-8-sig").startswith("id,fingerprint"))
+
+    def test_el_csv_neutraliza_formulas_de_hoja_de_calculo(self):
+        """Un mensaje de log que empieza por `=` no puede ejecutarse en Excel."""
+        self.conn.execute(
+            "INSERT INTO incidents (fingerprint, category, severity, sample_message,"
+            " first_seen, last_seen, event_count, status)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                "=SUM(A1:A2)",
+                "+cmd|' /C calc'!A0",
+                50,
+                "@echo off",
+                "2026-10-05T12:00:00.000Z",
+                "2026-10-05T12:00:00.000Z",
+                60,
+                "-OPEN",
+            ),
+        )
+        rows = list(csv.reader(io.StringIO(export_incidents_csv(self.conn).decode("utf-8-sig"))))
+        record = dict(zip(rows[0], rows[1], strict=False))
+
+        self.assertEqual(record["fingerprint"], "'=SUM(A1:A2)")
+        self.assertEqual(record["category"], "'+cmd|' /C calc'!A0")
+        self.assertEqual(record["sample_message"], "'@echo off")
+        self.assertEqual(record["status"], "'-OPEN")
+        # Los números siguen siendo números: prefijarlos rompería sumas y orden.
+        self.assertEqual(record["severity"], "50")
+        self.assertEqual(record["event_count"], "60")
 
     def test_cli_export_obedece_el_filtro_status(self):
         """`--status RESOLVED --export csv` no debe volcar los incidentes OPEN."""

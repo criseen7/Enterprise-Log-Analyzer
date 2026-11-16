@@ -34,7 +34,7 @@ from app.analysis.anomalies import anomalies as detect
 from app.analysis.fingerprint import normalize_message
 from app.db.connection import transaction
 from app.mcp import hitl
-from app.mcp._context import read_connection, write_connection
+from app.mcp._context import clamp_bounds, read_connection, write_connection
 from app.mcp.schemas import (
     AnomalyRecord,
     EventRecord,
@@ -166,14 +166,17 @@ def _detail(conn: sqlite3.Connection, incident_id: int) -> GetIncidentResult:
 
     # Las anomalías se limitan a la ventana del incidente: fuera de ella, un
     # pico no tiene nada que ver con este incidente. `upper` incluye el último
-    # evento, que `until` (exclusivo) dejaría fuera.
+    # evento, que `until` (exclusivo) dejaría fuera. Si el incidente abarca más
+    # que el tope configurado, se examina el tramo más reciente: enumerar meses
+    # hora a hora no aporta al detalle y puede agotar la memoria.
+    anomaly_lo, anomaly_hi = clamp_bounds(first_seen, upper)
     related = detect(
         conn,
         z_threshold=3.0,
         min_samples=10,
         min_severity=ERROR,
-        since=first_seen,
-        until=upper,
+        since=anomaly_lo,
+        until=anomaly_hi,
     )
 
     incident = IncidentDetail(
@@ -261,10 +264,18 @@ def _set_status(
             incident_status=row["status"],
             pending_action=_pending(action),
             message=(
-                "El cambio está pendiente de aprobación humana. "
-                f"Para aprobarlo: `python -m app.mcp approve {action.id}`. "
-                "El comando devuelve un confirm_token; pásalo de vuelta en "
-                "la llamada siguiente con confirm_token=..."
+                (
+                    "La acción ya está aprobada y espera ejecución. "
+                    f"Recupera el token con `python -m app.mcp approve {action.id}` "
+                    "y pásalo de vuelta con confirm_token=..."
+                )
+                if action.status == hitl.APPROVED
+                else (
+                    "El cambio está pendiente de aprobación humana. "
+                    f"Para aprobarlo: `python -m app.mcp approve {action.id}`. "
+                    "El comando devuelve un confirm_token; pásalo de vuelta en "
+                    "la llamada siguiente con confirm_token=..."
+                )
             ),
         )
 

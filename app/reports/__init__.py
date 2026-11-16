@@ -7,6 +7,25 @@ import io
 import sqlite3
 from typing import Any
 
+# Excel y LibreOffice interpretan estas primeras letras como una fórmula, aunque
+# la celda venga entrecomillada por CSV. Un mensaje de log que empiece por `=`
+# se convierte en código ejecutable al abrir el export. El prefijo `'` obliga a
+# la hoja de cálculo a tratar la celda como texto.
+_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _csv_safe(value: Any) -> Any:
+    """Neutraliza celdas de texto que una hoja de cálculo leería como fórmula.
+
+    Los números se dejan intactos: `-50` es una severidad, no una fórmula, y
+    convertirlo en texto rompería el orden y las sumas del export.
+    """
+    if not isinstance(value, str):
+        return value
+    if value.startswith(_FORMULA_PREFIXES):
+        return "'" + value
+    return value
+
 
 def export_incidents_csv(conn: sqlite3.Connection, *, status: str | None = None) -> bytes:
     query = """
@@ -41,14 +60,14 @@ def export_incidents_csv(conn: sqlite3.Connection, *, status: str | None = None)
         writer.writerow(
             [
                 d["id"],
-                d["fingerprint"],
-                d["category"],
+                _csv_safe(d["fingerprint"]),
+                _csv_safe(d["category"]),
                 d["severity"],
-                d["sample_message"],
+                _csv_safe(d["sample_message"]),
                 d["first_seen"],
                 d["last_seen"],
                 d["event_count"],
-                d["status"],
+                _csv_safe(d["status"]),
                 d["notified_at"],
             ]
         )

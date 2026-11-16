@@ -25,11 +25,13 @@ from typing import Any
 from unittest import mock
 
 from mcp import Client
+from mcp.server.mcpserver.exceptions import ToolError
 
 from app import config
 from app.mcp import hitl
 from app.mcp.__main__ import main
 from app.mcp.server import build_server
+from app.mcp.tools._base import guard
 from tests.helpers import TempDbTestCase
 
 EXPECTED_TOOLS = {
@@ -745,6 +747,106 @@ class HitlHardeningTests(McpTestCase):
         ).fetchone()[0]
         self.assertEqual(status, "OPEN")
 
+    def test_reutiliza_una_aprobacion_pendiente_de_ejecutar(self):
+        """Crear una PENDING nueva tiraría la aprobación que ya existe."""
+        first = self._pending()
+        action_id = first["pending_action"]["action_id"]
+        self._approve(action_id)
+
+        second = self._pending()
+        self.assertEqual(second["pending_action"]["action_id"], action_id)
+        self.assertEqual(second["pending_action"]["status"], hitl.APPROVED)
+        self.assertIn("ya está aprobada", second["message"])
+
+    def test_una_accion_caducada_no_se_reutiliza(self):
+        first = self._pending()
+        action_id = first["pending_action"]["action_id"]
+        self.conn.execute(
+            "UPDATE agent_actions SET expires_at = ? WHERE id = ?",
+            ("2000-01-01T00:00:00.000Z", action_id),
+        )
+
+        second = self._pending()
+        self.assertNotEqual(second["pending_action"]["action_id"], action_id)
+        old = hitl.get_action(self.conn, action_id)
+        self.assertIsNotNone(old)
+        self.assertEqual(old.status, hitl.EXPIRED)
+
+    def test_aprobar_una_caducada_la_marca_expirada(self):
+        action = hitl.create_action(
+            self.conn,
+            tool="set_incident_status",
+            params={"incident_id": self.incident_id, "status": "ACKNOWLEDGED"},
+        )
+        self.conn.execute(
+            "UPDATE agent_actions SET expires_at = ? WHERE id = ?",
+            ("2000-01-01T00:00:00.000Z", action.id),
+        )
+        with self.connect() as conn:
+            with self.assertRaises(hitl.HitlError):
+                hitl.approve_action(conn, action.id)
+        stored = hitl.get_action(self.conn, action.id)
+        self.assertIsNotNone(stored)
+        self.assertEqual(stored.status, hitl.EXPIRED)
+
+    def test_aprobar_una_accion_ejecutada_falla(self):
+        action_id = self._pending()["pending_action"]["action_id"]
+        self._approve(action_id)
+        with self.connect() as conn:
+            hitl.mark_executed(conn, action_id, result="ok")
+
+        with self.connect() as conn:
+            with self.assertRaises(hitl.HitlError):
+                hitl.approve_action(conn, action_id)
+
+    def test_mark_executed_sin_aprobacion_falla(self):
+        action_id = self._pending()["pending_action"]["action_id"]
+        with self.connect() as conn:
+            with self.assertRaises(hitl.HitlError):
+                hitl.mark_executed(conn, action_id)
+
+    def test_aprobar_no_rearma_una_accion_que_otro_proceso_ejecuto(self):
+        """CAS: una lectura vieja no puede pisar una transición ya hecha.
+
+        Se conserva el snapshot `PENDING` y se fuerza a `get_action` a
+        devolverlo aunque la base ya diga `EXECUTED`. El `UPDATE ... WHERE
+        status = PENDING` debe afectar 0 filas y fallar en vez de rearmar la
+        mutación.
+        """
+        action_id = self._pending()["pending_action"]["action_id"]
+        stale = hitl.get_action(self.conn, action_id)
+        self.assertIsNotNone(stale)
+        self._approve(action_id)
+        with self.connect() as conn:
+            hitl.mark_executed(conn, action_id, result="ok")
+
+        with mock.patch.object(hitl, "get_action", return_value=stale):
+            with self.connect() as conn:
+                with self.assertRaises(hitl.HitlError):
+                    hitl.approve_action(conn, action_id)
+
+        stored = hitl.get_action(self.conn, action_id)
+        self.assertIsNotNone(stored)
+        self.assertEqual(stored.status, hitl.EXECUTED)
+
+    def test_un_token_no_ascii_se_rechaza_sin_excepcion(self):
+        action_id = self._pending()["pending_action"]["action_id"]
+        action = self._approve(action_id)
+        self.assertFalse(
+            hitl.verify(
+                action,
+                tool="set_incident_status",
+                params={"incident_id": self.incident_id, "status": "ACKNOWLEDGED"},
+                token="ñ" * 64,
+            )
+        )
+
+    def test_list_actions_acota_el_limite(self):
+        for _ in range(hitl.MAX_ACTIONS + 5):
+            hitl.create_action(self.conn, tool="set_incident_status", params={})
+        self.assertEqual(len(hitl.list_actions(self.conn, limit=10_000)), hitl.MAX_ACTIONS)
+        self.assertEqual(len(hitl.list_actions(self.conn, limit=-1)), 1)
+
 
 class SecretTests(McpTestCase):
     def test_el_secreto_es_estable_y_queda_en_0600(self):
@@ -768,6 +870,105 @@ class SecretTests(McpTestCase):
 
         if os.name != "nt":
             self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+
+    def test_el_directorio_del_secreto_queda_en_0700(self):
+        with mock.patch.dict(os.environ, {hitl.SECRET_ENV_VAR: ""}):
+            hitl.load_secret()
+            directory = hitl.secret_path().parent
+        if os.name != "nt":
+            self.assertEqual(directory.stat().st_mode & 0o777, 0o700)
+
+    def test_no_sigue_un_symlink_hacia_otro_fichero(self):
+        path = hitl.secret_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        target = path.parent / "otro-fichero"
+        target.write_bytes(b"secreto ajeno")
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            pass
+        try:
+            os.symlink(target, path)
+        except (OSError, NotImplementedError):
+            self.skipTest("el sistema no admite symlinks")
+
+        with mock.patch.dict(os.environ, {hitl.SECRET_ENV_VAR: ""}):
+            with self.assertRaises(hitl.HitlError):
+                hitl.load_secret()
+        self.assertEqual(target.read_bytes(), b"secreto ajeno")
+
+
+class WindowCapTests(McpTestCase):
+    """P1-4: ninguna ventana enumerada hora a hora puede crecer sin tope."""
+
+    def test_una_ventana_explicita_demasiado_grande_falla(self):
+        result = self.call(
+            "detect_anomalies",
+            {
+                "since": "2026-01-01T00:00:00Z",
+                "until": "2026-03-01T00:00:00Z",
+            },
+        )
+        self.assertTrue(result.is_error)
+        self.assertIn("demasiado grande", result.content[0].text)
+
+    def test_compare_windows_rechaza_un_rango_explicito_demasiado_grande(self):
+        self.add_event(ts="2026-01-01T00:00:00.000Z", message="pool", fingerprint="fp_span")
+        result = self.call(
+            "compare_windows",
+            {
+                "fingerprint": "fp_span",
+                "since": "2026-01-01T00:00:00Z",
+                "until": "2026-03-01T00:00:00Z",
+            },
+        )
+        self.assertTrue(result.is_error)
+        self.assertIn("demasiado grande", result.content[0].text)
+
+    def test_blast_radius_recorta_el_historico_derivado(self):
+        self.add_event(ts="2026-01-01T00:00:00.000Z", message="pool", fingerprint="fp_span")
+        self.add_event(ts="2026-03-01T00:00:00.000Z", message="pool", fingerprint="fp_span")
+
+        data = self.payload("blast_radius", {"fingerprint": "fp_span"})
+        self.assertLessEqual(len(data["timeline"]), 745)
+        self.assertGreaterEqual(len(data["timeline"]), 1)
+
+    def test_bounded_bounds_recorta_un_rango_abierto_al_tramo_reciente(self):
+        from datetime import timedelta
+
+        from app.mcp._context import bounded_bounds
+        from app.timeutil import parse_utc
+
+        self.add_event(ts="2026-01-01T00:00:00.000Z", message="pool", fingerprint="fp_span")
+        self.add_event(ts="2026-03-01T00:00:00.000Z", message="pool", fingerprint="fp_span")
+
+        lo, hi = bounded_bounds(self.conn, None, None)
+        self.assertIsNotNone(lo)
+        self.assertIsNotNone(hi)
+        lo_dt, hi_dt = parse_utc(lo), parse_utc(hi)
+        self.assertIsNotNone(lo_dt)
+        self.assertIsNotNone(hi_dt)
+        self.assertLessEqual(hi_dt - lo_dt, timedelta(days=31))
+
+
+class GuardTests(unittest.TestCase):
+    """P2: el mensaje al modelo no filtra detalles internos."""
+
+    def _boom(self, exc: Exception) -> str:
+        with self.assertRaises(ToolError) as ctx:
+            guard(lambda: (_ for _ in ()).throw(exc))
+        return str(ctx.exception)
+
+    def test_un_error_interno_no_filtra_tipo_ni_mensaje(self):
+        text = self._boom(RuntimeError("ruta secreta /etc/passwd"))
+        self.assertNotIn("RuntimeError", text)
+        self.assertNotIn("/etc/passwd", text)
+
+    def test_un_error_de_sqlite_no_filtra_el_esquema(self):
+        import sqlite3
+
+        text = self._boom(sqlite3.OperationalError("no such table: agent_secrets"))
+        self.assertNotIn("agent_secrets", text)
 
 
 class CliToolsTests(unittest.TestCase):

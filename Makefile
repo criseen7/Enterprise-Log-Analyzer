@@ -1,10 +1,12 @@
 PYTHON ?= python3
 VENV   ?= .venv
 PY     ?= $(VENV)/bin/python
+# El servidor MCP no trae autenticación: escucha en loopback salvo opt-in.
+MCP_HOST ?= 127.0.0.1
 
 .DEFAULT_GOAL := help
 
-.PHONY: help check install migrate migrate-status test test-verbose check-db seed demo dashboard mcp mcp-http tools investigate eval-smoke eval-full clean reset-db fmt lint docker-build docker-up docker-down docker-logs
+.PHONY: help check install migrate migrate-status test test-verbose check-db seed demo dashboard dashboard-admin mcp mcp-http tools investigate eval-smoke eval-full clean reset-db fmt lint docker-build docker-up docker-down docker-logs
 
 help: ## Muestra esta ayuda
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -33,8 +35,11 @@ check-db: ## Verifica que la base existe y usa WAL
 seed: ## Genera logs sintéticos para el demo
 	$(PY) tools/generate_sample_logs.py
 
-dashboard: ## Levanta el dashboard
-	streamlit run app/ui/app.py
+dashboard: ## Levanta el dashboard en sólo lectura (default)
+	ELA_ADMIN_MODE=0 streamlit run app/ui/app.py
+
+dashboard-admin: ## Levanta el dashboard con escrituras habilitadas
+	ELA_ADMIN_MODE=1 streamlit run app/ui/app.py
 
 demo: migrate seed ## Prepara la base y genera datos de ejemplo
 	@echo "Listo. Siguiente: make dashboard"
@@ -46,8 +51,8 @@ reset-db: ## Borra la base de datos (migraciones y datos)
 mcp: ## Arranca el servidor MCP por stdio (para Claude Desktop)
 	$(PY) -m app.mcp mcp
 
-mcp-http: ## Arranca el servidor MCP por streamable-http en :8000
-	$(PY) -m app.mcp mcp --http --host 0.0.0.0 --port 8000
+mcp-http: ## Arranca el servidor MCP por streamable-http (MCP_HOST=127.0.0.1)
+	$(PY) -m app.mcp mcp --http --host $(MCP_HOST) --port 8000
 
 tools: ## Lista las tools MCP registradas
 	$(PY) -m app.mcp tools

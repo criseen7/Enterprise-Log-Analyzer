@@ -24,7 +24,13 @@ from app.analysis.blast import blast_radius as engine_blast_radius
 from app.analysis.windows import ELEVATED_RATIO
 from app.analysis.windows import WindowStats as EngineWindowStats
 from app.analysis.windows import compare_windows as engine_compare_windows
-from app.mcp._context import read_connection, resolve_bounds
+from app.mcp._context import (
+    bounded_bounds,
+    clamp_bounds,
+    max_window,
+    read_connection,
+    resolve_bounds,
+)
 from app.mcp.schemas import (
     BlastRadiusResult,
     CompareWindowsResult,
@@ -51,6 +57,41 @@ def _stats(raw: EngineWindowStats) -> WindowStats:
     )
 
 
+def _reject_oversize(lo: str, hi: str) -> None:
+    """Falla si una ventana explícita supera el tope configurado."""
+    span = max_window()
+    lo_dt, hi_dt = parse_utc(lo), parse_utc(hi)
+    if lo_dt is not None and hi_dt is not None and hi_dt - lo_dt > span:
+        raise ValueError(
+            f"ventana demasiado grande: máximo {span.days} días. "
+            "Reduce since/until o divide la consulta en tramos."
+        )
+
+
+def _cap_window(
+    conn: sqlite3.Connection,
+    fingerprint: str,
+    since: str | None,
+    until: str | None,
+) -> tuple[str | None, str | None]:
+    """Ventana de comparación acotada al tope configurado.
+
+    Con dos extremos explícitos se valida; sin ninguno se deriva del histórico
+    de la huella y se conserva el tramo más reciente. Un solo extremo se deja
+    intacto: el motor lo rechaza como ventana no medible y el mensaje de error
+    explica por qué.
+    """
+    lo, hi = resolve_bounds(since, until)
+    if lo is not None and hi is not None:
+        _reject_oversize(lo, hi)
+        return lo, hi
+    if lo is None and hi is None:
+        data_lo, data_hi = _bounds_for(conn, fingerprint)
+        if data_lo is not None and data_hi is not None:
+            return clamp_bounds(data_lo, data_hi)
+    return lo, hi
+
+
 def _compare(
     conn: sqlite3.Connection,
     *,
@@ -70,8 +111,10 @@ def _compare(
         raise ValueError("elevated_ratio debe ser > 0")
     if z_threshold <= 0:
         raise ValueError("z_threshold debe ser > 0")
-    lo, hi = resolve_bounds(since, until)
+    lo, hi = _cap_window(conn, fingerprint, since, until)
     base_lo, base_hi = resolve_bounds(baseline_since, baseline_until)
+    if base_lo is not None and base_hi is not None:
+        _reject_oversize(base_lo, base_hi)
 
     comparison = engine_compare_windows(
         conn,
@@ -183,14 +226,18 @@ def _blast(
     if correlation_window_minutes <= 0:
         raise ValueError("correlation_window_minutes debe ser > 0")
     lo, hi = resolve_bounds(since, until)
-    if lo is None or hi is None:
-        # Sin ventana explícita, el radio de impacto se calcula sobre todo el
-        # histórico de la huella: acotarlo al rango del dataset es lo único que
-        # se puede hacer sin inventar un timeframe.
+    if lo is not None and hi is not None:
+        # Una ventana explícita que supera el tope se rechaza: recortarla en
+        # silencio describiría una comparación distinta de la pedida.
+        lo, hi = bounded_bounds(conn, lo, hi)
+    else:
+        # Sin ventana explícita, el histórico lo pone la huella. Se conserva el
+        # tramo más reciente que quepa en el tope: meses enumerados hora a hora
+        # no caben en memoria.
         data_lo, data_hi = _bounds_for(conn, fingerprint)
-        if data_lo is None:
+        if data_lo is None or data_hi is None:
             raise ValueError(f"la huella {fingerprint!r} no tiene ningún evento en la base")
-        lo, hi = data_lo, data_hi
+        lo, hi = clamp_bounds(lo or data_lo, hi or data_hi)
 
     radius = engine_blast_radius(
         conn,

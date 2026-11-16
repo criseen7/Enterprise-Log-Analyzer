@@ -174,12 +174,55 @@ class DashboardSmokeTests(unittest.TestCase):
         from streamlit.testing.v1 import AppTest
 
         self.write_logs()
-        at = AppTest.from_file(str(REPO_ROOT / "app" / "ui" / "app.py"), default_timeout=60)
-        at.run()
+        with EnvSandbox(ELA_ADMIN_MODE="1"):
+            self.config._cached = None
+            at = AppTest.from_file(str(REPO_ROOT / "app" / "ui" / "app.py"), default_timeout=60)
+            at.run()
 
         self.assert_no_exception(at)
         self.assertTrue(any(t.value == "Overview" for t in at.title))
         self.assertGreater(self.count_events(), 0, "el auto-seed no ingirió nada")
+        self.config._cached = None
+
+    def test_el_dashboard_en_solo_lectura_no_siembra(self):
+        from streamlit.testing.v1 import AppTest
+
+        self.write_logs()
+        at = AppTest.from_file(str(REPO_ROOT / "app" / "ui" / "app.py"), default_timeout=60)
+        at.run()
+
+        self.assert_no_exception(at)
+        self.assertEqual(self.count_events(), 0)
+        self.assertTrue(
+            any("sólo lectura" in c.value for c in at.caption),
+            [c.value for c in at.caption],
+        )
+
+    def test_settings_en_solo_lectura_avisa_y_no_ofrece_escrituras(self):
+        from streamlit.testing.v1 import AppTest
+
+        from app.db.migrations import migrate
+
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        migrate(self.db_path)
+
+        at = AppTest.from_string(_page_script("settings"), default_timeout=30)
+        at.run()
+
+        self.assert_no_exception(at)
+        self.assertTrue(any("sólo lectura" in i.value for i in at.info), [i.value for i in at.info])
+        self.assertEqual([t.label for t in at.text_input], [])
+
+    def test_incidents_en_solo_lectura_avisa(self):
+        from streamlit.testing.v1 import AppTest
+
+        self._open_incident()
+        at = AppTest.from_string(_page_script("incidents"), default_timeout=30)
+        at.run()
+
+        self.assert_no_exception(at)
+        self.assertTrue(any("sólo lectura" in i.value for i in at.info), [i.value for i in at.info])
+        self.assertIn("Evaluar ahora", [b.label for b in at.button])
 
     def test_app_sin_logs_muestra_estado_vacio(self):
         from streamlit.testing.v1 import AppTest

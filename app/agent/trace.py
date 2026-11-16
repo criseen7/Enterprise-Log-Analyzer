@@ -25,6 +25,7 @@ from typing import Any
 
 from app.agent.contracts import AgentRun
 from app.mcp._context import write_connection
+from app.securefs import ensure_private_dir, open_private_for_write
 from app.timeutil import to_canonical
 
 DEFAULT_TRACES_DIR = Path("traces")
@@ -33,6 +34,41 @@ DEFAULT_TRACES_DIR = Path("traces")
 # escribe fuera de `traces/`. La regla es la misma que la del resource
 # `loglens://trace/{run_id}`: si no es un nombre simple, no es un run.
 _RUN_ID = re.compile(r"[A-Za-z0-9._-]{1,80}")
+
+# Claves cuyo valor no debe acabar en un JSONL que se publica. Se comparan por
+# subcadena y en minúsculas: `apiKey`, `X-Api-Key` y `confirm_token` caen todos.
+_SECRET_MARKERS = (
+    "token",
+    "secret",
+    "password",
+    "passwd",
+    "api_key",
+    "apikey",
+    "authorization",
+    "credential",
+)
+REDACTED = "[REDACTED]"
+
+
+def _redact(value: Any) -> Any:
+    """Sustituye recursivamente los valores de claves sensibles.
+
+    La traza se guarda para auditar el razonamiento del agente, no para
+    conservar credenciales. Un payload con el token de aprobación HITL o una
+    API key no puede sobrevivir a esa frontera.
+    """
+    if isinstance(value, dict):
+        return {
+            key: (REDACTED if _is_secret_key(key) else _redact(item)) for key, item in value.items()
+        }
+    if isinstance(value, (list, tuple)):
+        return [_redact(item) for item in value]
+    return value
+
+
+def _is_secret_key(key: Any) -> bool:
+    lowered = str(key).lower()
+    return any(marker in lowered for marker in _SECRET_MARKERS)
 
 
 def _validate_run_id(run_id: str) -> None:
@@ -52,15 +88,17 @@ class TraceRecorder:
         _validate_run_id(run_id)
         self.run_id = run_id
         self.directory = Path(directory) if directory is not None else traces_dir()
-        self.directory.mkdir(parents=True, exist_ok=True)
+        ensure_private_dir(self.directory)
         self.path = self.directory / f"{run_id}.jsonl"
-        self._handle = self.path.open("w", encoding="utf-8")
+        # O_NOFOLLOW + 0600: un symlink plantado en `traces/` no puede redirigir
+        # la escritura, y el contenido no queda legible por otros usuarios.
+        self._handle = os.fdopen(open_private_for_write(self.path), "w", encoding="utf-8")
 
     def record(self, kind: str, **payload: Any) -> None:
         line = {
             "ts": to_canonical(datetime.now(UTC)),
             "kind": kind,
-            **payload,
+            **_redact(payload),
         }
         self._handle.write(json.dumps(line, ensure_ascii=False, default=str) + "\n")
         self._handle.flush()
@@ -131,4 +169,11 @@ def list_runs(limit: int = 20) -> list[dict[str, Any]]:
     return [dict(row) for row in rows]
 
 
-__all__ = ["DEFAULT_TRACES_DIR", "TraceRecorder", "list_runs", "record_run", "traces_dir"]
+__all__ = [
+    "DEFAULT_TRACES_DIR",
+    "REDACTED",
+    "TraceRecorder",
+    "list_runs",
+    "record_run",
+    "traces_dir",
+]

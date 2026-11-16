@@ -85,6 +85,10 @@ class AnalysisConfig:
     cooldown_minutes: int = field(default=10, metadata={"env": "ELA_COOLDOWN_MINUTES"})
     anomaly_zscore: float = field(default=3.0, metadata={"env": "ELA_ANOMALY_ZSCORE"})
     anomaly_min_samples: int = field(default=5, metadata={"env": "ELA_ANOMALY_MIN_SAMPLES"})
+    # Tope de las ventanas que se materializan hora a hora (anomalías,
+    # comparaciones, radio de impacto). Un rango abierto no puede obligar al
+    # servidor a construir años de buckets en memoria.
+    max_window_days: int = field(default=31, metadata={"env": "ELA_MAX_WINDOW_DAYS"})
 
 
 @dataclass(frozen=True)
@@ -93,6 +97,10 @@ class UIConfig:
     page_icon: str = field(default="📊", metadata={"env": "ELA_PAGE_ICON"})
     cache_ttl_seconds: int = field(default=30, metadata={"env": "ELA_CACHE_TTL_SECONDS"})
     default_page_size: int = field(default=100, metadata={"env": "ELA_DEFAULT_PAGE_SIZE"})
+    # El dashboard es de sólo lectura salvo que se habilite explícitamente.
+    # Escribir (ingerir, reclasificar, evaluar incidentes) es una acción de
+    # administración: en un despliegue compartido no debe estar a un clic.
+    admin_mode: bool = field(default=False, metadata={"env": "ELA_ADMIN_MODE"})
 
 
 @dataclass(frozen=True)
@@ -305,6 +313,8 @@ def _validate(settings: Settings) -> None:
         problems.append("analysis.incident_threshold debe ser > 0")
     if settings.analysis.anomaly_zscore <= 0:
         problems.append("analysis.anomaly_zscore debe ser > 0")
+    if not 1 <= settings.analysis.max_window_days <= 366:
+        problems.append("analysis.max_window_days debe estar en 1..366")
 
     if problems:
         raise ConfigError("configuración inválida:\n  - " + "\n  - ".join(problems))

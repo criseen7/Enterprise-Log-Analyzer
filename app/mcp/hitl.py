@@ -34,11 +34,15 @@ import json
 import os
 import secrets
 import sqlite3
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from app.config import Settings, get_settings
+from app.db.connection import transaction
+from app.securefs import ensure_private_dir, read_private
 from app.timeutil import to_canonical
 
 PENDING = "PENDING"
@@ -54,11 +58,16 @@ VALID_STATUSES = (PENDING, APPROVED, EXECUTED, REJECTED, EXPIRED)
 # token robado de un log sirva de algo.
 DEFAULT_TTL_SECONDS = 900
 
+# Tope de la lista de acciones. `limit` llega de la CLI y un `-1` no puede
+# convertirse en "vuelca la tabla entera": la aprobación es una consola humana,
+# no un export.
+MAX_ACTIONS = 200
+
 # Variable de entorno con la clave del HMAC. Si está, manda sobre el fichero.
 SECRET_ENV_VAR = "LOGLENS_HITL_SECRET"
 
 
-class HitlError(Exception):
+class HitlError(ValueError):
     """Fallo de aprobación previsto: la tool lo convierte en `ToolError`."""
 
 
@@ -87,6 +96,22 @@ def _stamp(moment: datetime) -> str:
     return to_canonical(moment)
 
 
+@contextmanager
+def _immediate(conn: sqlite3.Connection) -> Iterator[None]:
+    """Toma el lock de escritura si la conexión no está ya en una transacción.
+
+    Las transiciones HITL se leen y se escriben bajo `BEGIN IMMEDIATE` para que
+    dos procesos (CLI de aprobación y servidor MCP) no puedan intercalar una
+    lectura vieja con una escritura nueva. Si el llamante ya abrió la
+    transacción, se reutiliza: abrir otra con `BEGIN` fallaría.
+    """
+    if conn.in_transaction:
+        yield
+        return
+    with transaction(conn):
+        yield
+
+
 def secret_path(settings: Settings | None = None) -> Path:
     """Ruta del fichero donde se guarda la clave si no hay variable de entorno."""
     settings = settings or get_settings()
@@ -113,25 +138,24 @@ def load_secret(settings: Settings | None = None) -> bytes:
 
     settings = settings or get_settings()
     path = secret_path(settings)
-    if path.exists():
-        try:
-            _tighten_permissions(path)
-            return path.read_bytes()
-        except FileNotFoundError:
-            # Otro proceso lo borró entre `exists()` y `read_bytes()`: se crea.
-            pass
+    try:
+        return _read_secret(path)
+    except FileNotFoundError:
+        # Otro proceso lo borró entre `exists()` y `read`: se crea.
+        pass
+    except ValueError as exc:
+        raise HitlError(str(exc)) from exc
 
-    path.parent.mkdir(parents=True, exist_ok=True)
+    ensure_private_dir(path.parent)
     return _create_secret(path)
 
 
-def _tighten_permissions(path: Path) -> None:
-    """Fija 0600 también en un fichero que ya existía con permisos más amplios."""
+def _read_secret(path: Path) -> bytes:
+    """Lee el secreto sin seguir symlinks y lo deja en 0600."""
     try:
-        os.chmod(path, 0o600)
-    except OSError:
-        # En sistemas sin permisos POSIX no hay nada que endurecer.
-        pass
+        return read_private(path)
+    except ValueError as exc:
+        raise HitlError(str(exc)) from exc
 
 
 def _create_secret(path: Path) -> bytes:
@@ -152,10 +176,8 @@ def _create_secret(path: Path) -> bytes:
         try:
             os.link(tmp, path)
         except FileExistsError:
-            _tighten_permissions(path)
-            return path.read_bytes()
-        _tighten_permissions(path)
-        return value
+            return _read_secret(path)
+        return _read_secret(path)
     finally:
         try:
             os.unlink(tmp)
@@ -261,9 +283,14 @@ def list_actions(
     status: str | None = None,
     limit: int = 50,
 ) -> list[Action]:
-    """Acciones registradas, de la más reciente a la más antigua."""
+    """Acciones registradas, de la más reciente a la más antigua.
+
+    `limit` se acota a `MAX_ACTIONS`: un valor negativo no puede desactivar el
+    `LIMIT` y volcar la tabla completa.
+    """
     if status is not None and status not in VALID_STATUSES:
         raise ValueError(f"status inválido: {status!r}, esperado uno de {VALID_STATUSES}")
+    limit = max(1, min(int(limit), MAX_ACTIONS))
     sql = "SELECT * FROM agent_actions"
     params: list[object] = []
     if status is not None:
@@ -274,30 +301,53 @@ def list_actions(
     return [_row_to_action(row) for row in conn.execute(sql, params)]
 
 
+def expire_stale(conn: sqlite3.Connection, *, now: datetime | None = None) -> int:
+    """Marca como `EXPIRED` las aprobaciones y pendientes caducadas.
+
+    Sin este barrido, una acción caducada se queda en `PENDING`/`APPROVED` para
+    siempre y el dedupe la sigue viendo como viva hasta que alguien la toca.
+    Devuelve cuántas filas cambiaron.
+    """
+    stamp = _stamp(now or _now())
+    with _immediate(conn):
+        cursor = conn.execute(
+            """
+            UPDATE agent_actions
+               SET status = ?
+             WHERE status IN (?, ?) AND expires_at < ?
+            """,
+            (EXPIRED, PENDING, APPROVED, stamp),
+        )
+        return cursor.rowcount
+
+
 def find_pending(
     conn: sqlite3.Connection,
     *,
     tool: str,
     params: dict[str, object],
 ) -> Action | None:
-    """Acción pendiente vigente para esta tool y estos parámetros, si existe.
+    """Acción reutilizable para esta tool y estos parámetros, si existe.
 
     Evita que un agente en bucle llene `agent_actions` con la misma petición:
-    mientras la anterior siga viva, se reutiliza en vez de crear otra.
+    mientras la anterior siga viva se reutiliza en vez de crear otra. También
+    se reutiliza una `APPROVED` pendiente de ejecutar: crear una `PENDING`
+    nueva tiraría la aprobación humana que ya existe.
     """
+    expire_stale(conn)
     row = conn.execute(
         """
         SELECT * FROM agent_actions
-         WHERE status = ? AND tool = ? AND params = ?
-         ORDER BY created_at DESC, id DESC
+         WHERE status IN (?, ?) AND tool = ? AND params = ?
+         ORDER BY CASE status WHEN ? THEN 0 ELSE 1 END,
+                  created_at DESC, id DESC
          LIMIT 1
         """,
-        (PENDING, tool, _canonical_params(params)),
+        (PENDING, APPROVED, tool, _canonical_params(params), APPROVED),
     ).fetchone()
     if row is None:
         return None
-    action = _row_to_action(row)
-    return None if is_expired(action) else action
+    return _row_to_action(row)
 
 
 def find_approved(
@@ -316,6 +366,7 @@ def find_approved(
     un token válido podía quedar fuera de la página.
     """
     key = secret if secret is not None else load_secret()
+    expire_stale(conn)
     rows = conn.execute(
         """
         SELECT * FROM agent_actions
@@ -348,85 +399,131 @@ def approve_action(
 
     Es la mitad humana del flujo: la ejecuta el operador, no el agente. Por eso
     esta función **no** está expuesta como tool MCP.
-    """
-    action = get_action(conn, action_id)
-    if action is None:
-        raise HitlError(f"no existe la acción {action_id!r}")
-    if action.status == EXECUTED:
-        raise HitlError(f"la acción {action_id!r} ya se ejecutó")
-    if action.status == REJECTED:
-        raise HitlError(f"la acción {action_id!r} fue rechazada")
-    if action.status == APPROVED:
-        # Aprobar dos veces es un no-op idempotente: se devuelve el mismo token
-        # sin reescribir `approved_at`/`approved_by`. Reescribirlos borraría la
-        # auditoría de quién aprobó realmente.
-        if is_expired(action):
-            conn.execute("UPDATE agent_actions SET status = ? WHERE id = ?", (EXPIRED, action_id))
-            raise HitlError(f"la acción {action_id!r} caducó y ya no se puede aprobar")
-        if not action.confirm_token:
-            raise HitlError(f"la acción {action_id!r} está aprobada pero no tiene token")
-        return action
-    if action.status == EXPIRED or is_expired(action):
-        conn.execute("UPDATE agent_actions SET status = ? WHERE id = ?", (EXPIRED, action_id))
-        raise HitlError(f"la acción {action_id!r} caducó y ya no se puede aprobar")
 
+    La transición es compare-and-swap: sólo `PENDING -> APPROVED`. Si otro
+    proceso ya la ejecutó, el `UPDATE` no toca ninguna fila y la aprobación
+    falla en vez de rearmar una mutación que ya ocurrió.
+    """
     key = secret if secret is not None else load_secret()
-    token = compute_token(key, action.id, action.tool, action.params, action.expires_at)
-    now = _stamp(_now())
-    conn.execute(
-        """
-        UPDATE agent_actions
-           SET status = ?, confirm_token = ?, approved_at = ?, approved_by = ?
-         WHERE id = ?
-        """,
-        (APPROVED, token, now, approved_by, action_id),
-    )
-    return Action(
-        id=action.id,
-        tool=action.tool,
-        params=action.params,
-        status=APPROVED,
-        confirm_token=token,
-        created_at=action.created_at,
-        expires_at=action.expires_at,
-        approved_at=now,
-        approved_by=approved_by,
-    )
+    expire_stale(conn)
+    with _immediate(conn):
+        action = get_action(conn, action_id)
+        if action is None:
+            raise HitlError(f"no existe la acción {action_id!r}")
+        if action.status == EXECUTED:
+            raise HitlError(f"la acción {action_id!r} ya se ejecutó")
+        if action.status == REJECTED:
+            raise HitlError(f"la acción {action_id!r} fue rechazada")
+        if action.status == EXPIRED:
+            raise HitlError(f"la acción {action_id!r} caducó y ya no se puede aprobar")
+        if is_expired(action):
+            # Carrera con el reloj: `expire_stale` ya barrió, pero entre esa
+            # lectura y esta el TTL pudo vencer. No se escribe dentro de la
+            # transacción porque el `raise` la revertiría; el siguiente barrido
+            # la marca.
+            raise HitlError(f"la acción {action_id!r} caducó y ya no se puede aprobar")
+        if action.status == APPROVED:
+            # Aprobar dos veces es un no-op idempotente: se devuelve el mismo
+            # token sin reescribir `approved_at`/`approved_by`. Reescribirlos
+            # borraría la auditoría de quién aprobó realmente.
+            if not action.confirm_token:
+                raise HitlError(f"la acción {action_id!r} está aprobada pero no tiene token")
+            return action
+
+        token = compute_token(key, action.id, action.tool, action.params, action.expires_at)
+        now = _stamp(_now())
+        cursor = conn.execute(
+            """
+            UPDATE agent_actions
+               SET status = ?, confirm_token = ?, approved_at = ?, approved_by = ?
+             WHERE id = ? AND status = ?
+            """,
+            (APPROVED, token, now, approved_by, action_id, PENDING),
+        )
+        if cursor.rowcount != 1:
+            current = get_action(conn, action_id)
+            state = current.status if current is not None else "desaparecida"
+            raise HitlError(
+                f"conflicto al aprobar {action_id!r}: la acción cambió de estado "
+                f"({state}). No se aplicó ningún cambio."
+            )
+        return Action(
+            id=action.id,
+            tool=action.tool,
+            params=action.params,
+            status=APPROVED,
+            confirm_token=token,
+            created_at=action.created_at,
+            expires_at=action.expires_at,
+            approved_at=now,
+            approved_by=approved_by,
+        )
 
 
 def reject_action(
     conn: sqlite3.Connection, action_id: str, *, rejected_by: str = "operator"
 ) -> Action:
-    """Rechaza una acción pendiente."""
-    action = get_action(conn, action_id)
-    if action is None:
-        raise HitlError(f"no existe la acción {action_id!r}")
-    if action.status in (EXECUTED, REJECTED):
-        raise HitlError(f"la acción {action_id!r} está en {action.status} y no se puede rechazar")
-    now = _stamp(_now())
-    conn.execute(
-        "UPDATE agent_actions SET status = ?, approved_at = ?, approved_by = ? WHERE id = ?",
-        (REJECTED, now, rejected_by, action_id),
-    )
-    return Action(
-        id=action.id,
-        tool=action.tool,
-        params=action.params,
-        status=REJECTED,
-        confirm_token=None,
-        created_at=action.created_at,
-        expires_at=action.expires_at,
-        approved_at=now,
-        approved_by=rejected_by,
-    )
+    """Rechaza una acción pendiente o aprobada, sin tocar una ejecutada."""
+    expire_stale(conn)
+    with _immediate(conn):
+        action = get_action(conn, action_id)
+        if action is None:
+            raise HitlError(f"no existe la acción {action_id!r}")
+        if action.status in (EXECUTED, REJECTED, EXPIRED):
+            raise HitlError(
+                f"la acción {action_id!r} está en {action.status} y no se puede rechazar"
+            )
+        if is_expired(action):
+            # Ver la nota de `approve_action`: escribir aquí no serviría porque
+            # el `raise` revierte la transacción.
+            raise HitlError(f"la acción {action_id!r} caducó y ya no se puede rechazar")
+        now = _stamp(_now())
+        cursor = conn.execute(
+            """
+            UPDATE agent_actions
+               SET status = ?, approved_at = ?, approved_by = ?
+             WHERE id = ? AND status IN (?, ?)
+            """,
+            (REJECTED, now, rejected_by, action_id, PENDING, APPROVED),
+        )
+        if cursor.rowcount != 1:
+            current = get_action(conn, action_id)
+            state = current.status if current is not None else "desaparecida"
+            raise HitlError(
+                f"conflicto al rechazar {action_id!r}: la acción cambió de estado "
+                f"({state}). No se aplicó ningún cambio."
+            )
+        return Action(
+            id=action.id,
+            tool=action.tool,
+            params=action.params,
+            status=REJECTED,
+            confirm_token=None,
+            created_at=action.created_at,
+            expires_at=action.expires_at,
+            approved_at=now,
+            approved_by=rejected_by,
+        )
 
 
 def mark_executed(conn: sqlite3.Connection, action_id: str, *, result: str = "") -> None:
-    """Cierra la acción como ejecutada, con el resultado."""
-    conn.execute(
-        "UPDATE agent_actions SET status = ?, executed_at = ?, result = ? WHERE id = ?",
-        (EXECUTED, _stamp(_now()), result, action_id),
-    )
+    """Cierra la acción como ejecutada, sólo si estaba `APPROVED`."""
+    with _immediate(conn):
+        cursor = conn.execute(
+            """
+            UPDATE agent_actions
+               SET status = ?, executed_at = ?, result = ?
+             WHERE id = ? AND status = ?
+            """,
+            (EXECUTED, _stamp(_now()), result, action_id, APPROVED),
+        )
+        if cursor.rowcount != 1:
+            current = get_action(conn, action_id)
+            state = current.status if current is not None else "desaparecida"
+            raise HitlError(
+                f"la acción {action_id!r} no está aprobada (estado: {state}); "
+                "no se puede marcar como ejecutada"
+            )
 
 
 def verify(
@@ -452,7 +549,12 @@ def verify(
         return False
     key = secret if secret is not None else load_secret()
     expected = compute_token(key, action.id, tool, params, action.expires_at)
-    return hmac.compare_digest(expected, token)
+    try:
+        return hmac.compare_digest(expected.encode("utf-8"), token.encode("utf-8"))
+    except UnicodeEncodeError:
+        # Un token no-ASCII no puede ser el hex que emitimos: se rechaza sin
+        # lanzar `TypeError` (compare_digest sólo acepta ASCII en `str`).
+        return False
 
 
 __all__ = [
@@ -460,6 +562,7 @@ __all__ = [
     "DEFAULT_TTL_SECONDS",
     "EXECUTED",
     "EXPIRED",
+    "MAX_ACTIONS",
     "PENDING",
     "REJECTED",
     "SECRET_ENV_VAR",
@@ -469,6 +572,7 @@ __all__ = [
     "approve_action",
     "compute_token",
     "create_action",
+    "expire_stale",
     "find_approved",
     "find_pending",
     "get_action",

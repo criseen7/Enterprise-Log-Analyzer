@@ -36,6 +36,11 @@ class DefaultsTests(unittest.TestCase):
         self.assertEqual(settings.db.journal_mode, "wal")
         self.assertEqual(settings.paths.patterns_dir.name, "patterns")
 
+    def test_los_defaults_de_seguridad_no_escriben(self):
+        settings = load_settings(config_path="/nonexistent.yaml")
+        self.assertFalse(settings.ui.admin_mode)
+        self.assertEqual(settings.analysis.max_window_days, 31)
+
 
 class LayeringTests(unittest.TestCase):
     def write(self, tmp: Path, name: str, body: str) -> Path:
@@ -89,13 +94,19 @@ class EnvCoercionTests(unittest.TestCase):
     def test_bool(self):
         with EnvSandbox(ELA_NOT_A_BOOL="maybe"):
             pass  # sanity: el sandbox no debe filtrar variables
-        # No hay campos bool hoy; se prueba el coercor directamente.
+        # El coercor se prueba directo además del override de `ELA_ADMIN_MODE`.
         from app.config import _coerce
 
         self.assertIs(_coerce("true", bool), True)
         self.assertIs(_coerce("OFF", bool), False)
         with self.assertRaises(ConfigError):
             _coerce("quizá", bool)
+
+    def test_admin_mode_por_entorno(self):
+        with EnvSandbox(ELA_ADMIN_MODE="1"):
+            self.assertTrue(load_settings(config_path="/nonexistent.yaml").ui.admin_mode)
+        with EnvSandbox(ELA_ADMIN_MODE="0"):
+            self.assertFalse(load_settings(config_path="/nonexistent.yaml").ui.admin_mode)
 
     def test_comma_separated_tuple(self):
         from app.config import _coerce
@@ -138,6 +149,10 @@ class ValidationTests(unittest.TestCase):
 
     def test_rejects_out_of_range_severity(self):
         self.assertRejects("analysis:\n  min_incident_severity: 900\n", "min_incident_severity")
+
+    def test_rejects_out_of_range_window_days(self):
+        self.assertRejects("analysis:\n  max_window_days: 0\n", "max_window_days")
+        self.assertRejects("analysis:\n  max_window_days: 999\n", "max_window_days")
 
     def test_rejects_malformed_yaml(self):
         self.assertRejects("db:\n  busy_timeout_ms: [unclosed\n", "no es YAML válido")
