@@ -112,10 +112,10 @@ class BlastSemanticsTests(unittest.TestCase):
         self.assertFalse(case["is_cascade"])
         self.assertIn("sólo aparece en un servicio", case["cascade_note"])
 
-    def test_ventanas_solapadas_son_cascada(self):
+    def test_servicios_intercalados_son_cascada(self):
         case = BLAST["cascade_overlap"]
         self.assertTrue(case["is_cascade"])
-        self.assertIn("0 min", case["cascade_note"])
+        self.assertIn("1 min", case["cascade_note"])
 
     def test_hueco_dentro_de_la_ventana_es_cascada_y_se_cita(self):
         case = BLAST["cascade_gap"]

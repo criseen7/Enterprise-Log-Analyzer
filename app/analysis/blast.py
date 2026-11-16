@@ -29,6 +29,10 @@ from app.timeutil import parse_utc as _parse
 # Ventana de correlación por defecto, en minutos.
 DEFAULT_CORRELATION_MINUTES = 15
 
+# Los eventos sin `service` no se descartan: son impacto real, aunque no se sepa
+# qué componente lo emitió. Se agrupan bajo una etiqueta explícita.
+NO_SERVICE = "(sin servicio)"
+
 
 @dataclass(frozen=True)
 class ServiceImpact:
@@ -58,18 +62,53 @@ class BlastRadius:
     correlation_window_minutes: int
 
 
-def _gap_minutes(a: tuple[datetime, datetime], b: tuple[datetime, datetime]) -> float | None:
-    """Minutos entre dos intervalos `[inicio, fin]`. `None` si no se pueden ordenar.
+def _cascade_evidence(
+    conn: sqlite3.Connection,
+    fingerprint: str,
+    *,
+    since: str | None,
+    until: str | None,
+) -> tuple[float, str, str] | None:
+    """Par de eventos de servicios distintos más cercano en el tiempo.
 
-    Solapados → 0. Si uno termina antes de que empiece el otro, la distancia es
-    el hueco entre el fin del primero y el inicio del segundo.
+    Se recorre la serie ordenada una sola vez. Comparar intervalos `[MIN, MAX]`
+    por servicio convertía un evento a las 00:00 y otro a las 23:00 en una
+    "ventana de fallo" que solapaba con cualquier cosa del día; dos eventos
+    reales y adyacentes no tienen ese problema.
     """
-    (a0, a1), (b0, b1) = a, b
-    if a1 < b0:
-        return (b0 - a1).total_seconds() / 60.0
-    if b1 < a0:
-        return (a0 - b1).total_seconds() / 60.0
-    return 0.0
+    clauses = ["fingerprint = ?", "timestamp_utc IS NOT NULL"]
+    params: list[object] = [fingerprint]
+    if since is not None:
+        clauses.append("timestamp_utc >= ?")
+        params.append(since)
+    if until is not None:
+        clauses.append("timestamp_utc < ?")
+        params.append(until)
+    rows = conn.execute(
+        f"""
+        SELECT timestamp_utc,
+               COALESCE(service, ?) AS service
+        FROM events
+        WHERE {" AND ".join(clauses)}
+        ORDER BY timestamp_utc, service
+        """,
+        [NO_SERVICE, *params],
+    ).fetchall()
+
+    previous_moment: datetime | None = None
+    previous_service: str | None = None
+    closest: tuple[float, str, str] | None = None
+    for row in rows:
+        moment = _parse(str(row["timestamp_utc"]))
+        if moment is None:
+            continue
+        service = str(row["service"])
+        if previous_moment is not None and previous_service != service:
+            gap = (moment - previous_moment).total_seconds() / 60.0
+            if closest is None or gap < closest[0]:
+                closest = (gap, str(previous_service), service)
+        previous_moment, previous_service = moment, service
+    return closest
 
 
 def _timeline(
@@ -90,14 +129,13 @@ def _timeline(
     rows = conn.execute(
         """
         SELECT substr(timestamp_utc, 1, 13) || ':00' AS bucket,
-               service,
+               COALESCE(service, ?) AS service,
                COUNT(*) AS n
         FROM events
         WHERE fingerprint = ? AND timestamp_utc >= ? AND timestamp_utc < ?
-          AND service IS NOT NULL
-        GROUP BY bucket, service
+        GROUP BY 1, 2
         """,
-        (fingerprint, since, until),
+        (NO_SERVICE, fingerprint, since, until),
     ).fetchall()
 
     per_bucket: dict[str, dict[str, int]] = {}
@@ -146,16 +184,16 @@ def blast_radius(
 
     rows = conn.execute(
         f"""
-        SELECT service,
+        SELECT COALESCE(service, ?) AS service,
                COUNT(*)             AS n,
                MIN(timestamp_utc)   AS first_seen,
                MAX(timestamp_utc)   AS last_seen
         FROM events
-        WHERE {where} AND service IS NOT NULL
-        GROUP BY service
-        ORDER BY n DESC
+        WHERE {where}
+        GROUP BY 1
+        ORDER BY n DESC, first_seen, service
         """,
-        params,
+        [NO_SERVICE, *params],
     ).fetchall()
 
     if not rows:
@@ -176,38 +214,22 @@ def blast_radius(
     is_cascade = False
     note = ""
     if len(impacts) >= 2:
-        intervals: list[tuple[datetime, datetime]] = []
-        for impact in impacts:
-            lo = _parse(impact.first_seen or "")
-            hi = _parse(impact.last_seen or "")
-            if lo is None or hi is None:
-                continue
-            intervals.append((lo, hi))
-
-        closest: tuple[float, str, str] | None = None
-        for i in range(len(intervals)):
-            for j in range(i + 1, len(intervals)):
-                gap = _gap_minutes(intervals[i], intervals[j])
-                if gap is None:
-                    continue
-                if closest is None or gap < closest[0]:
-                    closest = (gap, impacts[i].service, impacts[j].service)
-
+        closest = _cascade_evidence(conn, fingerprint, since=since, until=until)
         if closest is not None and closest[0] <= correlation_window_minutes:
             is_cascade = True
             gap, first, second = closest
             note = (
-                f"La misma huella aparece en {len(impacts)} servicios y sus ventanas "
-                f"de fallo se solapan o están a {gap:.0f} min "
-                f"({first} / {second}), dentro de la ventana de correlación de "
-                f"{correlation_window_minutes} min: el fallo probablemente se propaga, "
-                f"y la causa raíz está en el servicio que falla primero."
+                f"La misma huella aparece en {len(impacts)} servicios y hay eventos "
+                f"de dos de ellos a {gap:.0f} min ({first} / {second}), dentro de "
+                f"la ventana de correlación de {correlation_window_minutes} min: "
+                f"el fallo probablemente se propaga, y la causa raíz está en el "
+                f"servicio que falla primero."
             )
         else:
             note = (
-                f"La misma huella aparece en {len(impacts)} servicios, pero sus ventanas "
-                f"de fallo no se solapan dentro de los {correlation_window_minutes} min: "
-                f"no hay evidencia de cascada."
+                f"La misma huella aparece en {len(impacts)} servicios, pero no hay "
+                f"eventos de dos servicios dentro de los "
+                f"{correlation_window_minutes} min: no hay evidencia de cascada."
             )
     else:
         note = (
@@ -232,6 +254,7 @@ def blast_radius(
 
 __all__ = [
     "DEFAULT_CORRELATION_MINUTES",
+    "NO_SERVICE",
     "BlastRadius",
     "ServiceImpact",
     "TimeBucket",

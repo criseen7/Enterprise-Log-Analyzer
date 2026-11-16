@@ -61,7 +61,7 @@
         }
       ],
       "is_cascade": true,
-      "cascade_note": "La misma huella aparece en 2 servicios y sus ventanas de fallo se solapan o están a 0 min (db / api), dentro de la ventana de correlación de 15 min: el fallo probablemente se propaga, y la causa raíz está en el servicio que falla primero.",
+      "cascade_note": "La misma huella aparece en 2 servicios y hay eventos de dos de ellos a 1 min (api / db), dentro de la ventana de correlación de 15 min: el fallo probablemente se propaga, y la causa raíz está en el servicio que falla primero.",
       "correlation_window_minutes": 15
     }
   },
@@ -98,7 +98,7 @@
         }
       ],
       "is_cascade": true,
-      "cascade_note": "La misma huella aparece en 2 servicios y sus ventanas de fallo se solapan o están a 8 min (db / api), dentro de la ventana de correlación de 15 min: el fallo probablemente se propaga, y la causa raíz está en el servicio que falla primero.",
+      "cascade_note": "La misma huella aparece en 2 servicios y hay eventos de dos de ellos a 8 min (db / api), dentro de la ventana de correlación de 15 min: el fallo probablemente se propaga, y la causa raíz está en el servicio que falla primero.",
       "correlation_window_minutes": 15
     }
   },
@@ -141,7 +141,7 @@
         }
       ],
       "is_cascade": false,
-      "cascade_note": "La misma huella aparece en 2 servicios, pero sus ventanas de fallo no se solapan dentro de los 15 min: no hay evidencia de cascada.",
+      "cascade_note": "La misma huella aparece en 2 servicios, pero no hay eventos de dos servicios dentro de los 15 min: no hay evidencia de cascada.",
       "correlation_window_minutes": 15
     }
   },
@@ -160,17 +160,17 @@
           "share": 0.6
         },
         {
-          "service": "cache",
-          "count": 1,
-          "first_seen": "2026-11-05T10:50:00.000Z",
-          "last_seen": "2026-11-05T10:50:00.000Z",
-          "share": 0.2
-        },
-        {
           "service": "api",
           "count": 1,
           "first_seen": "2026-11-05T10:05:00.000Z",
           "last_seen": "2026-11-05T10:05:00.000Z",
+          "share": 0.2
+        },
+        {
+          "service": "cache",
+          "count": 1,
+          "first_seen": "2026-11-05T10:50:00.000Z",
+          "last_seen": "2026-11-05T10:50:00.000Z",
           "share": 0.2
         }
       ],
@@ -186,7 +186,7 @@
         }
       ],
       "is_cascade": true,
-      "cascade_note": "La misma huella aparece en 3 servicios y sus ventanas de fallo se solapan o están a 3 min (db / api), dentro de la ventana de correlación de 15 min: el fallo probablemente se propaga, y la causa raíz está en el servicio que falla primero.",
+      "cascade_note": "La misma huella aparece en 3 servicios y hay eventos de dos de ellos a 3 min (db / api), dentro de la ventana de correlación de 15 min: el fallo probablemente se propaga, y la causa raíz está en el servicio que falla primero.",
       "correlation_window_minutes": 15
     }
   },
@@ -214,7 +214,7 @@
       ],
       "timeline": [],
       "is_cascade": true,
-      "cascade_note": "La misma huella aparece en 2 servicios y sus ventanas de fallo se solapan o están a 5 min (db / api), dentro de la ventana de correlación de 15 min: el fallo probablemente se propaga, y la causa raíz está en el servicio que falla primero.",
+      "cascade_note": "La misma huella aparece en 2 servicios y hay eventos de dos de ellos a 5 min (db / api), dentro de la ventana de correlación de 15 min: el fallo probablemente se propaga, y la causa raíz está en el servicio que falla primero.",
       "correlation_window_minutes": 15
     }
   },
@@ -257,7 +257,7 @@
         }
       ],
       "is_cascade": true,
-      "cascade_note": "La misma huella aparece en 2 servicios y sus ventanas de fallo se solapan o están a 58 min (db / api), dentro de la ventana de correlación de 60 min: el fallo probablemente se propaga, y la causa raíz está en el servicio que falla primero.",
+      "cascade_note": "La misma huella aparece en 2 servicios y hay eventos de dos de ellos a 58 min (db / api), dentro de la ventana de correlación de 60 min: el fallo probablemente se propaga, y la causa raíz está en el servicio que falla primero.",
       "correlation_window_minutes": 60
     }
   },
