@@ -1,7 +1,10 @@
 """Detección de incidentes basada en recurrencia por ventana.
 
 Toma los patrones recurrentes (mismo fingerprint en ventana) y crea/actualiza
-incidentes con upsert por fingerprint, respetando cooldown vía `notified_at`.
+incidentes con upsert por fingerprint. El cooldown usa `notified_at` (reloj de
+pared) y la ocurrencia real usa `notified_through` (último `last_seen`
+notificado): sin las dos cosas, una ventana estática reabre y renotifica
+incidentes sin ningún evento nuevo.
 """
 
 from __future__ import annotations
@@ -76,23 +79,44 @@ def _should_notify(now: datetime, notified_at: str | None, cooldown_minutes: int
     return False
 
 
+def _has_new_occurrence(last_seen: str, notified_through: str | None) -> bool:
+    """True sólo si hay un evento posterior al último que ya se notificó.
+
+    `notified_through` es un timestamp de datos, no el reloj: compararlo con el
+    `last_seen` de la ventana actual distingue un rebrote real de la misma
+    ventana estática que sigue conteniendo los eventos viejos.
+    """
+    if notified_through is None:
+        return True
+    return _parse_iso(last_seen) > _parse_iso(notified_through)
+
+
+def _latest(a: str | None, b: str) -> str:
+    """El mayor de dos timestamps ISO, sin retroceder la marca de agua."""
+    if a is None:
+        return b
+    return b if _parse_iso(b) > _parse_iso(a) else a
+
+
 def _upsert_incident(
     conn: sqlite3.Connection, c: IncidentCandidate, now: datetime, cooldown_minutes: int
 ) -> dict:
     """Crea o actualiza un incidente por fingerprint.
 
-    Reapertura automática: si el incidente estaba `RESOLVED` y vuelve a
-    detectarse recurrencia, pasa a `OPEN` y se notifica en esta misma pasada
-    (reiniciar el cooldown es marcar `notified_at = now`, no dejarlo en NULL).
-    `event_count` refleja el conteo de la ventana, no un máximo acumulado.
+    Reapertura automática: un incidente `RESOLVED` sólo vuelve a `OPEN` si hay
+    un evento posterior a `notified_through`, y en ese caso se notifica en esta
+    misma pasada. La misma ventana estática no es un rebrote: sus eventos ya se
+    notificaron y no justifican otra alerta. `event_count` refleja el conteo de
+    la ventana, no un máximo acumulado.
     """
     notify_on_insert = _should_notify(now, None, cooldown_minutes)
     cursor = conn.execute(
         """
         INSERT OR IGNORE INTO incidents (
             fingerprint, category, severity, sample_message,
-            first_seen, last_seen, event_count, status, notified_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'OPEN', ?)
+            first_seen, last_seen, event_count, status,
+            notified_at, notified_through
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'OPEN', ?, ?)
         """,
         (
             c.fingerprint,
@@ -103,6 +127,7 @@ def _upsert_incident(
             c.last_seen,
             c.event_count,
             _format_iso(now) if notify_on_insert else None,
+            c.last_seen if notify_on_insert else None,
         ),
     )
     if cursor.rowcount == 1:
@@ -115,7 +140,7 @@ def _upsert_incident(
 
     row = conn.execute(
         """
-        SELECT id, status, notified_at, event_count, first_seen, last_seen
+        SELECT id, status, notified_at, notified_through, event_count, first_seen, last_seen
         FROM incidents
         WHERE fingerprint = ?
         """,
@@ -125,25 +150,30 @@ def _upsert_incident(
         raise RuntimeError(f"incidente no insertado ni encontrado: {c.fingerprint!r}")
 
     inc_id, status_cur, notified_at_cur = row["id"], row["status"], row["notified_at"]
+    notified_through_cur = row["notified_through"]
+    has_new = _has_new_occurrence(c.last_seen, notified_through_cur)
     new_status = status_cur
     new_notified_at = notified_at_cur
+    new_notified_through = notified_through_cur
     notify = False
 
     if status_cur == "RESOLVED":
-        # Un rebrote reabre y **notifica en esta misma pasada**. Antes se
-        # reiniciaba `notified_at` a NULL y `notify` quedaba en False: la alerta
-        # no salía hasta la siguiente evaluación, y si no había otra, no salía
-        # nunca. Reiniciar el cooldown significa marcar la notificación ahora,
-        # no dejarla pendiente.
-        new_status = "OPEN"
-        notify = True
-        new_notified_at = _format_iso(now)
+        # Un rebrote real reabre y notifica en esta misma pasada. Si no hay
+        # evento nuevo, el incidente sigue resuelto: la ventana sólo repite lo
+        # que ya se notificó antes de cerrarlo.
+        if has_new:
+            new_status = "OPEN"
+            notify = True
+            new_notified_at = _format_iso(now)
+            new_notified_through = _latest(notified_through_cur, c.last_seen)
     else:
-        notify = _should_notify(now, notified_at_cur, cooldown_minutes)
+        # El cooldown no basta: hace falta una ocurrencia posterior a la última
+        # notificada. Si el evento nuevo llega durante el cooldown, la marca no
+        # avanza y la siguiente evaluación sí avisa.
+        notify = has_new and _should_notify(now, notified_at_cur, cooldown_minutes)
         if notify:
             new_notified_at = _format_iso(now)
-        else:
-            new_notified_at = notified_at_cur
+            new_notified_through = _latest(notified_through_cur, c.last_seen)
 
     conn.execute(
         """
@@ -155,7 +185,8 @@ def _upsert_incident(
             last_seen = CASE WHEN ? > last_seen THEN ? ELSE last_seen END,
             event_count = ?,
             status = ?,
-            notified_at = ?
+            notified_at = ?,
+            notified_through = ?
         WHERE id = ?
         """,
         (
@@ -169,6 +200,7 @@ def _upsert_incident(
             c.event_count,
             new_status,
             new_notified_at,
+            new_notified_through,
             inc_id,
         ),
     )

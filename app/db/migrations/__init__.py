@@ -43,6 +43,7 @@ _deltas: dict[int, Path] = {
     5: MIGRATIONS_DIR / "_005_agent_actions.sql",
     6: MIGRATIONS_DIR / "_006_agent_runs.sql",
     7: MIGRATIONS_DIR / "_007_log_files_head_hash.sql",
+    8: MIGRATIONS_DIR / "_008_incident_notified_through.sql",
 }
 
 # Versiones que entrega la baseline. Debe ser exactamente los deltas cargados:
@@ -75,11 +76,28 @@ def _delta_007_already_applied(conn) -> bool:
     return _column_exists(conn, "log_files", "head_hash")
 
 
+def _delta_008_already_applied(conn) -> bool:
+    """True si `_008` ya añadió `incidents.notified_through`.
+
+    Si el DDL se aplicó pero la versión no llegó a registrarse, se reafirma el
+    relleno de las filas ya notificadas. Es idempotente: sólo toca las que
+    siguen en NULL.
+    """
+    if not _column_exists(conn, "incidents", "notified_through"):
+        return False
+    conn.execute(
+        "UPDATE incidents SET notified_through = last_seen "
+        "WHERE notified_at IS NOT NULL AND notified_through IS NULL"
+    )
+    return True
+
+
 # Deltas que no son re-ejecutables en SQL puro. El guard detecta si el efecto ya
 # está presente y, de ser así, sólo reafirma su parte idempotente.
 _DELTA_GUARDS: dict[int, Callable[[sqlite3.Connection], bool]] = {
     3: _delta_003_already_applied,
     7: _delta_007_already_applied,
+    8: _delta_008_already_applied,
 }
 
 

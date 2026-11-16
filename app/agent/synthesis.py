@@ -15,6 +15,8 @@ traza, gate— no sabe cuál se usó. Solamente lo dice la traza.
 from __future__ import annotations
 
 import json
+import re
+from typing import Any
 
 from app.agent.contracts import Claim, Diagnosis, EvidenceBundle, EvidenceItem
 from app.agent.llm import LLMClient, LLMResponse
@@ -22,20 +24,72 @@ from app.agent.promptfiles import load_rendered
 
 DEFAULT_MODEL = "claude-sonnet-4-5"
 
+# Una línea de log es entrada no confiable: puede pedirle al modelo que ignore
+# las reglas o cerrar el bloque donde vive. Se delimita, se limpian los tags y
+# se trunca antes de que llegue al prompt; el recorte total evita que un log
+# gigante desplace al resto de la evidencia.
+MAX_SUMMARY_CHARS = 400
+MAX_VALUE_CHARS = 400
+MAX_LIST_ITEMS = 20
+MAX_CONTEXT_CHARS = 24_000
+EVIDENCE_OPEN = '<evidence trust="untrusted-log-data">'
+EVIDENCE_CLOSE = "</evidence>"
+
+_CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+_EVIDENCE_TAG = re.compile(r"<\s*/?\s*evidence", re.IGNORECASE)
+
+
+def _clean(text: str, limit: int) -> str:
+    cleaned = _CONTROL.sub("", text)
+    cleaned = _EVIDENCE_TAG.sub("&lt;evidence", cleaned)
+    if len(cleaned) > limit:
+        return f"{cleaned[:limit]}…[truncado {len(cleaned) - limit} caracteres]"
+    return cleaned
+
+
+def _sanitize(value: Any, depth: int = 0) -> Any:
+    if isinstance(value, str):
+        return _clean(value, MAX_VALUE_CHARS)
+    if isinstance(value, dict):
+        if depth >= 3:
+            return _clean(str(value), MAX_VALUE_CHARS)
+        return {_clean(str(key), 80): _sanitize(item, depth + 1) for key, item in value.items()}
+    if isinstance(value, list | tuple):
+        items = [_sanitize(item, depth + 1) for item in value[:MAX_LIST_ITEMS]]
+        if len(value) > MAX_LIST_ITEMS:
+            items.append(f"…[{len(value) - MAX_LIST_ITEMS} elementos omitidos]")
+        return items
+    return value
+
 
 def evidence_context(bundle: EvidenceBundle) -> str:
-    """La evidencia tal como se le entrega al modelo: ids y hechos, sin SQL."""
-    payload = [
-        {
+    """La evidencia tal como se le entrega al modelo: ids y hechos, sin SQL.
+
+    Va dentro de un bloque explícitamente no confiable. El bloque no es sólo
+    decoración: `_clean` neutraliza cualquier `</evidence>` que venga en un
+    mensaje de log para que no pueda cerrarlo y escribir instrucciones fuera.
+    """
+    budget = MAX_CONTEXT_CHARS - len(EVIDENCE_OPEN) - len(EVIDENCE_CLOSE) - 2
+    lines: list[str] = []
+    omitted = 0
+    for item in bundle.items:
+        entry = {
             "evidence_id": item.evidence_id,
             "kind": item.kind,
-            "summary": item.summary,
-            "ts": item.ts,
-            "fields": item.fields,
+            "summary": _clean(item.summary, MAX_SUMMARY_CHARS),
+            "ts": _sanitize(item.ts),
+            "fields": _sanitize(item.fields),
         }
-        for item in bundle.items
-    ]
-    return json.dumps(payload, ensure_ascii=False, indent=2)
+        line = json.dumps(entry, ensure_ascii=False)
+        if len(line) > budget:
+            omitted += 1
+            continue
+        lines.append(line)
+        budget -= len(line) + 1
+    body = "\n".join(lines)
+    if omitted:
+        body += f"\n[{omitted} elementos de evidencia omitidos por tamaño]"
+    return f"{EVIDENCE_OPEN}\n{body}\n{EVIDENCE_CLOSE}"
 
 
 def _top_fingerprint(bundle: EvidenceBundle) -> EvidenceItem | None:

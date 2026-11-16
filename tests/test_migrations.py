@@ -15,6 +15,7 @@ from pathlib import Path
 from unittest import mock
 
 from app.db import migrations
+from app.db.connection import connect
 from app.db.migrations import migrate, status
 from app.db.schema import SCHEMA_VERSION
 
@@ -66,6 +67,53 @@ class MigrationLockTests(unittest.TestCase):
             self.assertIn(1, migrate(db_path))
             self.assertEqual(migrate(db_path), [])
             self.assertEqual(status(db_path), (SCHEMA_VERSION, SCHEMA_VERSION))
+
+
+class IncidentWatermarkMigrationTests(unittest.TestCase):
+    def test_v7_a_v8_rellena_la_marca_de_agua_de_lo_ya_notificado(self):
+        with tempfile.TemporaryDirectory(prefix="ela-migrate-v8-") as tmp:
+            db_path = Path(tmp) / "app.db"
+            conn = connect(db_path)
+            conn.execute(
+                "CREATE TABLE schema_version (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)"
+            )
+            conn.executemany(
+                "INSERT INTO schema_version (version, applied_at) VALUES (?, '2026-01-01T00:00:00Z')",
+                [(version,) for version in range(1, 8)],
+            )
+            conn.execute(
+                "CREATE TABLE incidents ("
+                "id INTEGER PRIMARY KEY, fingerprint TEXT NOT NULL UNIQUE, "
+                "last_seen TEXT NOT NULL, notified_at TEXT)"
+            )
+            conn.execute(
+                "INSERT INTO incidents (fingerprint, last_seen, notified_at) "
+                "VALUES ('notificado', '2026-10-05T12:00:00.000Z', "
+                "'2026-10-05T12:01:00.000Z')"
+            )
+            conn.execute(
+                "INSERT INTO incidents (fingerprint, last_seen, notified_at) "
+                "VALUES ('sin-notificar', '2026-10-05T11:00:00.000Z', NULL)"
+            )
+            conn.close()
+
+            self.assertIn(8, migrate(db_path))
+
+            conn = connect(db_path)
+            try:
+                columns = {
+                    str(row["name"])
+                    for row in conn.execute("SELECT name FROM pragma_table_info('incidents')")
+                }
+                self.assertIn("notified_through", columns)
+                rows = {
+                    str(row["fingerprint"]): row
+                    for row in conn.execute("SELECT fingerprint, notified_through FROM incidents")
+                }
+                self.assertEqual(rows["notificado"]["notified_through"], "2026-10-05T12:00:00.000Z")
+                self.assertIsNone(rows["sin-notificar"]["notified_through"])
+            finally:
+                conn.close()
 
 
 if __name__ == "__main__":

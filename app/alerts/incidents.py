@@ -35,6 +35,7 @@ INCIDENT_COLUMNS = (
     "event_count",
     "status",
     "notified_at",
+    "notified_through",
 )
 
 
@@ -90,7 +91,8 @@ def set_incident_status(conn: sqlite3.Connection, incident_id: int, status: str)
     Reabrir (`RESOLVED` -> `OPEN`) reinicia `notified_at` a NULL a propósito: un
     incidente reabierto es un incidente nuevo para el cooldown. Sin eso, el
     primer rebrote queda silenciado por la notificación anterior y el incidente
-    aparece abierto sin haberse avisado.
+    aparece abierto sin haberse avisado. `notified_through` no se toca: reabrir
+    a mano no convierte los eventos viejos en una ocurrencia nueva.
     """
     if status not in VALID_STATUSES:
         raise ValueError(f"status inválido: {status!r}, esperado uno de {VALID_STATUSES}")

@@ -25,12 +25,15 @@ from typing import Any
 from mcp import Client
 
 from app.agent.contracts import EvidenceBundle, EvidenceItem, Plan, PlanStep, ToolCall
-from app.agent.planner import PLANNABLE_TOOLS
+from app.agent.planner import (
+    PLANNABLE_TOOLS,
+    TOP_FINGERPRINT,
+    ensure_fingerprint_dependencies,
+)
 from app.mcp.server import build_server
 
-# Placeholder que el planner puede usar cuando no conoce la huella: se resuelve
-# contra el resultado real de los pasos previos, nunca contra una invención.
-TOP_FINGERPRINT = "$top_fingerprint"
+# El placeholder se define junto al planner, pero el ejecutor lo reexporta
+# porque forma parte de su contrato público.
 
 
 class ExecutionError(RuntimeError):
@@ -41,10 +44,25 @@ class _State:
     def __init__(self, bundle: EvidenceBundle | None = None) -> None:
         self.bundle = bundle if bundle is not None else EvidenceBundle()
         self.health: dict[str, Any] = {}
-        self.top_fingerprint: str | None = None
-        for item in self.bundle.items:
-            if item.kind == "fingerprint" and self.top_fingerprint is None:
-                self.top_fingerprint = item.evidence_id.removeprefix("fp:")
+        self.top_fingerprint: str | None = _best_fingerprint(self.bundle)
+
+
+def _best_fingerprint(bundle: EvidenceBundle) -> str | None:
+    """La huella de mejor rango del bundle, con desempate estable.
+
+    No se toma la primera que llegó: con dos productores en la misma ola, el
+    orden de finalización no es determinista y el consumidor elegiría una
+    huella distinta entre corridas.
+    """
+    fingerprints = [item for item in bundle.items if item.kind == "fingerprint"]
+    if not fingerprints:
+        return None
+
+    def key(item: EvidenceItem) -> tuple[int, str]:
+        rank = item.fields.get("rank")
+        return (rank if isinstance(rank, int) else 999, item.evidence_id)
+
+    return min(fingerprints, key=key).evidence_id.removeprefix("fp:")
 
 
 def _resolve(value: Any, state: _State) -> Any:
@@ -119,8 +137,6 @@ def _evidence(tool: str, payload: dict[str, Any], state: _State) -> list[Evidenc
         items = []
         for rank, error in enumerate(payload.get("errors") or [], start=1):
             fingerprint = str(error.get("fingerprint"))
-            if state.top_fingerprint is None:
-                state.top_fingerprint = fingerprint
             items.append(
                 EvidenceItem(
                     evidence_id=f"fp:{fingerprint}",
@@ -346,40 +362,8 @@ async def _execute(plan: Plan, state: _State) -> _State:
             await asyncio.gather(*(_run_step(client, step, state) for step in wave))
             done.update(step.step_id for step in wave)
             remaining = [step for step in remaining if step.step_id not in done]
+            state.top_fingerprint = _best_fingerprint(state.bundle)
     return state
-
-
-# Tools que pueden establecer `$top_fingerprint`. Un plan que usa el placeholder
-# sin una de ellas antes es un error del planner, no una ventana vacía.
-_FINGERPRINT_PRODUCERS = {"top_errors", "search_events"}
-
-
-def _uses_top_fingerprint(value: Any) -> bool:
-    if value == TOP_FINGERPRINT:
-        return True
-    if isinstance(value, dict):
-        return any(_uses_top_fingerprint(item) for item in value.values())
-    if isinstance(value, list):
-        return any(_uses_top_fingerprint(item) for item in value)
-    return False
-
-
-def _check_placeholders(plan: Plan) -> None:
-    """Rechaza un plan que referencia una huella que nadie va a producir.
-
-    Se comprueba antes de ejecutar: fallar a mitad de una ola paralela deja un
-    `ExceptionGroup` difícil de leer en la traza, y el fallo es del plan, no de
-    los datos.
-    """
-    produced = False
-    for step in plan.steps:
-        if _uses_top_fingerprint(step.params) and not produced:
-            raise ExecutionError(
-                f"el paso {step.step_id} usa {TOP_FINGERPRINT} sin un paso previo "
-                f"que lo produzca ({', '.join(sorted(_FINGERPRINT_PRODUCERS))})"
-            )
-        if step.tool in _FINGERPRINT_PRODUCERS:
-            produced = True
 
 
 def execute_plan(plan: Plan, bundle: EvidenceBundle | None = None) -> EvidenceBundle:
@@ -389,7 +373,10 @@ def execute_plan(plan: Plan, bundle: EvidenceBundle | None = None) -> EvidenceBu
     conservar la evidencia ya recogida en lugar de tirarla.
     """
     plan.validate_shape(PLANNABLE_TOOLS)
-    _check_placeholders(plan)
+    try:
+        plan = ensure_fingerprint_dependencies(plan)
+    except ValueError as exc:
+        raise ExecutionError(str(exc)) from exc
     state = asyncio.run(_execute(plan, _State(bundle)))
     return state.bundle
 

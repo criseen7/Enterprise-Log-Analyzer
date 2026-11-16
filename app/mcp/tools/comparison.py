@@ -226,6 +226,12 @@ def _blast(
     if correlation_window_minutes <= 0:
         raise ValueError("correlation_window_minutes debe ser > 0")
     lo, hi = resolve_bounds(since, until)
+    if (lo is None) != (hi is None):
+        raise ValueError(
+            "la ventana de blast_radius debe tener ambos extremos (since y until) "
+            "o ninguno; completar en silencio el que falta haría que el resultado "
+            "describiera un rango distinto del pedido"
+        )
     if lo is not None and hi is not None:
         # Una ventana explícita que supera el tope se rechaza: recortarla en
         # silencio describiría una comparación distinta de la pedida.
@@ -237,7 +243,7 @@ def _blast(
         data_lo, data_hi = _bounds_for(conn, fingerprint)
         if data_lo is None or data_hi is None:
             raise ValueError(f"la huella {fingerprint!r} no tiene ningún evento en la base")
-        lo, hi = clamp_bounds(lo or data_lo, hi or data_hi)
+        lo, hi = clamp_bounds(data_lo, data_hi)
 
     radius = engine_blast_radius(
         conn,

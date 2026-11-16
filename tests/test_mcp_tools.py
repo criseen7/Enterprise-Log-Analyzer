@@ -363,6 +363,32 @@ class CompareWindowsTests(McpTestCase):
         self.assertEqual(data["baseline"]["stddev"], 0.0)
         self.assertEqual(data["verdict"], "elevated")
 
+    def test_share_of_errors_no_supera_uno_con_eventos_no_error(self):
+        """El numerador se filtra a ERROR: INFO/WARN no inflan la proporción."""
+        self.add_event(
+            ts="2026-10-08T10:10:00.000Z",
+            message="pool agotado",
+            fingerprint="fp_share",
+            severity=45,
+        )
+        for minute in range(20, 23):
+            self.add_event(
+                ts=f"2026-10-08T10:{minute}:00.000Z",
+                message="pool agotado",
+                fingerprint="fp_share",
+                severity=30,
+            )
+        data = self.payload(
+            "compare_windows",
+            {
+                "fingerprint": "fp_share",
+                "since": "2026-10-08T10:00:00Z",
+                "until": "2026-10-08T11:00:00Z",
+            },
+        )
+        self.assertEqual(data["window"]["count"], 4)
+        self.assertEqual(data["window"]["share_of_errors"], 1.0)
+
     def test_una_huella_inexistente_es_un_error_legible(self):
         result = self.call("compare_windows", {"fingerprint": "no_existe"})
         self.assertTrue(result.is_error)
@@ -429,6 +455,80 @@ class BlastRadiusTests(McpTestCase):
         )
         data = self.payload("blast_radius", {"fingerprint": "fp_pool"})
         self.assertFalse(data["is_cascade"])
+
+    def test_eventos_en_extremos_no_fingen_una_ventana_solapada(self):
+        """Un evento al principio y otro al final no son una ventana continua."""
+        self.add_event(
+            ts="2026-10-01T10:00:00.000Z",
+            message="timeout de pool",
+            service="checkout",
+            fingerprint="fp_pool",
+        )
+        self.add_event(
+            ts="2026-10-01T11:00:00.000Z",
+            message="timeout de pool",
+            service="checkout",
+            fingerprint="fp_pool",
+        )
+        self.add_event(
+            ts="2026-10-01T10:30:00.000Z",
+            message="timeout de pool",
+            service="payment",
+            fingerprint="fp_pool",
+        )
+        data = self.payload(
+            "blast_radius",
+            {
+                "fingerprint": "fp_pool",
+                "since": "2026-10-01T10:00:00Z",
+                "until": "2026-10-01T12:00:00Z",
+            },
+        )
+        self.assertFalse(
+            data["is_cascade"],
+            "los eventos están a 30 min entre servicios; no hay cascada",
+        )
+
+    def test_los_eventos_sin_servicio_cuentan_en_el_impacto(self):
+        self.add_event(
+            ts="2026-10-01T10:00:00.000Z",
+            message="timeout de pool",
+            service=None,
+            fingerprint="fp_pool",
+        )
+        self.add_event(
+            ts="2026-10-01T10:01:00.000Z",
+            message="timeout de pool",
+            service="api",
+            fingerprint="fp_pool",
+        )
+        data = self.payload(
+            "blast_radius",
+            {
+                "fingerprint": "fp_pool",
+                "since": "2026-10-01T10:00:00Z",
+                "until": "2026-10-01T11:00:00Z",
+            },
+        )
+        self.assertEqual(data["total_events"], 2)
+        services = {item["service"]: item for item in data["affected_services"]}
+        self.assertIn("(sin servicio)", services)
+        self.assertEqual(services["(sin servicio)"]["count"], 1)
+        self.assertEqual(services["(sin servicio)"]["share"], 0.5)
+        self.assertIn("(sin servicio)", data["timeline"][0]["services"])
+
+    def test_una_ventana_a_solo_extremo_es_un_error_legible(self):
+        self.add_event(
+            ts="2026-10-01T10:00:00.000Z",
+            message="timeout de pool",
+            fingerprint="fp_pool",
+        )
+        result = self.call(
+            "blast_radius",
+            {"fingerprint": "fp_pool", "since": "2026-10-01T10:00:00Z"},
+        )
+        self.assertTrue(result.is_error)
+        self.assertIn("ambos extremos", result.content[0].text)
 
 
 class ExplainTests(McpTestCase):

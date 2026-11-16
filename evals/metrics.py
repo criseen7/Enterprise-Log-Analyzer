@@ -53,7 +53,7 @@ def case_metrics(result: dict[str, Any]) -> dict[str, Any]:
     # inflaría la métrica con texto que no se está evaluando.
     fact_claims = [
         claim
-        for key in ("valid", "invalid", "uncited")
+        for key in ("valid", "invalid", "uncited", "unsupported")
         for claim in citations.get(key, [])
         if claim.get("kind") == "fact"
     ]
@@ -82,6 +82,7 @@ def case_metrics(result: dict[str, Any]) -> dict[str, Any]:
         "facts": len(fact_claims),
         "fact_valid": len(valid_facts),
         "invalid_claims": len(citations.get("invalid", [])),
+        "unsupported_claims": len(citations.get("unsupported", [])),
         "all_claims": len(claims),
         "false_attribution": bool(attributed),
         "attributed_phrases": attributed,
@@ -101,7 +102,7 @@ def aggregate(results: list[dict[str, Any]]) -> dict[str, Any]:
     facts = sum(row["facts"] for row in evaluated)
     valid_facts = sum(row["fact_valid"] for row in evaluated)
     all_claims = sum(row["all_claims"] for row in evaluated)
-    invalid = sum(row["invalid_claims"] for row in evaluated)
+    invalid = sum(row["invalid_claims"] + row["unsupported_claims"] for row in evaluated)
 
     def rate(hits: int, total: int) -> float:
         return round(hits / total, 4) if total else 0.0

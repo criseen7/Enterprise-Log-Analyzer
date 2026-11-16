@@ -99,7 +99,10 @@ CREATE TABLE IF NOT EXISTS incidents (
     -- OPEN | ACKNOWLEDGED | RESOLVED
     status          TEXT    NOT NULL DEFAULT 'OPEN',
     -- Momento de la última notificación: implementa el cooldown.
-    notified_at     TEXT
+    notified_at     TEXT,
+    -- `last_seen` en el momento de la última notificación. Un evento con
+    -- timestamp posterior es la única ocurrencia que justifica reabrir/avisar.
+    notified_through TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_incidents_status ON incidents (status, severity DESC);

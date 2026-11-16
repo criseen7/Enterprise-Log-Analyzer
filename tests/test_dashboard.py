@@ -365,6 +365,43 @@ class DashboardSmokeTests(unittest.TestCase):
         values = [m.value for m in at.metric]
         self.assertIn("25", values, values)
 
+    def test_evaluar_ahora_pasa_los_valores_visibles(self):
+        """El botón no puede evaluar con los defaults mientras la UI muestra otros."""
+        from contextlib import contextmanager
+
+        from app.ui.views import incidents as view
+
+        captured: dict[str, object] = {}
+
+        def fake_evaluate(conn, *, window_minutes=None, min_count=None, min_severity=None):
+            captured.update(
+                window_minutes=window_minutes,
+                min_count=min_count,
+                min_severity=min_severity,
+            )
+            return {
+                "evaluated": 1,
+                "upserted": 1,
+                "window_minutes": window_minutes,
+                "incident_threshold": min_count,
+            }
+
+        @contextmanager
+        def fake_connection(*args, **kwargs):
+            yield object()
+
+        with (
+            mock.patch.object(view, "evaluate_incidents", fake_evaluate),
+            mock.patch.object(view, "connection", fake_connection),
+            mock.patch.object(view.audit, "record"),
+            mock.patch.object(view.cache, "clear_caches"),
+            mock.patch.object(view.st, "success"),
+            mock.patch.object(view.st, "rerun"),
+        ):
+            view._evaluate_now(7, 3, 40)
+
+        self.assertEqual(captured, {"window_minutes": 7, "min_count": 3, "min_severity": 40})
+
     def test_incidents_banner_avisa_de_abiertos(self):
         from streamlit.testing.v1 import AppTest
 

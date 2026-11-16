@@ -41,7 +41,7 @@ def render(selected: EventFilters) -> None:
         if ranking:
             st.plotly_chart(
                 charts.top_errors_bar(ranking, height=8 * 38 + 40),
-                use_container_width=True,
+                width="stretch",
             )
         else:
             st.info("No hay errores por encima de la severidad filtrada.")
@@ -51,7 +51,7 @@ def render(selected: EventFilters) -> None:
             selected.since, selected.until, min_severity=selected.min_severity
         )
         if by_cat:
-            st.plotly_chart(charts.category_bar(by_cat), use_container_width=True)
+            st.plotly_chart(charts.category_bar(by_cat), width="stretch")
         else:
             st.info("Sin categorías: ninguna regla ha coincidido con estos eventos.")
 
@@ -61,7 +61,7 @@ def render(selected: EventFilters) -> None:
     )
     st.subheader("Errores por hora")
     if hourly:
-        st.plotly_chart(charts.errors_over_time(hourly), use_container_width=True)
+        st.plotly_chart(charts.errors_over_time(hourly), width="stretch")
         st.caption(
             "Hora en UTC. Sólo aparecen las horas con errores; para la serie completa "
             "con huecos, ver Incidents (es la que alimenta el z-score)."
@@ -74,7 +74,7 @@ def render(selected: EventFilters) -> None:
     series = cache.severity_series(selected.since, selected.until, granularity)
     st.subheader("Timeline por severidad")
     if series:
-        st.plotly_chart(charts.severity_area(series), use_container_width=True)
+        st.plotly_chart(charts.severity_area(series), width="stretch")
     else:
         st.info("Sin eventos con timestamp en el rango.")
 
@@ -82,7 +82,7 @@ def render(selected: EventFilters) -> None:
     st.subheader("Heatmap día × hora")
     cells = cache.heatmap(selected.since, selected.until, min_severity=selected.min_severity)
     if cells:
-        st.plotly_chart(charts.heatmap_figure(cells), use_container_width=True)
+        st.plotly_chart(charts.heatmap_figure(cells), width="stretch")
         st.caption(
             "Día de la semana × hora del día, en UTC. Sólo errores ≥ "
             f"{selected.min_severity}. Un patrón diario repetido suele ser un job "

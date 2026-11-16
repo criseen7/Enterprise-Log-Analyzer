@@ -1,5 +1,8 @@
 name: CI
 
+permissions:
+  contents: read
+
 on:
   push:
     branches: [master, "feat/**"]
@@ -64,13 +67,19 @@ jobs:
         run: python -m unittest tests.test_engine_purity -v
 
   test:
-    name: tests
+    name: tests (py${{ matrix.python-version }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # El badge promete 3.11+; probar sólo 3.14 convertía esa promesa en
+        # una suposición. 3.14 es el runtime de despliegue.
+        python-version: ["3.11", "3.14"]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
-          python-version: "3.14"
+          python-version: ${{ matrix.python-version }}
           cache: pip
       - run: pip install -r requirements.txt -r requirements-dev.txt
       - name: bytecode
@@ -94,7 +103,7 @@ jobs:
         with:
           python-version: "3.14"
           cache: pip
-      - run: pip install -r requirements.txt -r requirements-dev.txt
+      - run: pip install -r requirements-evals.txt
       - name: el dataset versionado es reproducible
         run: python -m evals.dataset.build --verify
       - name: smoke determinista (A0, sin LLM)

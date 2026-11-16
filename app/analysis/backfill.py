@@ -23,13 +23,108 @@ dejarían la base a medias si algo fallara a mitad.
 from __future__ import annotations
 
 import sqlite3
+from collections import Counter
 
 from app.analysis.errors import ErrorRules
 from app.analysis.fingerprint import event_fingerprint
 from app.db.connection import transaction
+from app.timeutil import parse_utc
 
-_PENDING = "SELECT id, message, raw_line FROM events WHERE fingerprint IS NULL AND id > ? ORDER BY id LIMIT ?"
-_ALL = "SELECT id, message, raw_line FROM events WHERE id > ? ORDER BY id LIMIT ?"
+_PENDING = (
+    "SELECT id, message, raw_line, fingerprint FROM events "
+    "WHERE fingerprint IS NULL AND id > ? ORDER BY id LIMIT ?"
+)
+_ALL = "SELECT id, message, raw_line, fingerprint FROM events WHERE id > ? ORDER BY id LIMIT ?"
+
+# Prioridad de estados al fusionar dos incidentes que colapsan en la misma
+# huella: OPEN exige acción, RESOLVED no. El estado más accionable gana.
+_STATUS_PRIORITY = {"OPEN": 0, "ACKNOWLEDGED": 1, "RESOLVED": 2}
+
+
+def _max_iso(values: list[str | None]) -> str | None:
+    parsed = [(parse_utc(value), value) for value in values if value is not None]
+    parsed = [(moment, raw) for moment, raw in parsed if moment is not None]
+    if not parsed:
+        return None
+    return max(parsed, key=lambda item: item[0])[1]
+
+
+def _merge_status(values: list[str]) -> str:
+    return min(values, key=lambda value: _STATUS_PRIORITY.get(value, len(_STATUS_PRIORITY)))
+
+
+def _resync_incidents(conn: sqlite3.Connection, mapping: dict[str, Counter[str]]) -> None:
+    """Remapea incidentes tras `recalc` y los deja coherentes con `events`.
+
+    Recalcular huellas puede cambiar a qué fingerprint pertenece un incidente,
+    hacer que varios colapsen en uno solo o dejar huérfano al que ya no tiene
+    eventos. Sin esta resincronización, `get_incident` busca la huella vieja y la
+    siguiente detección crea un duplicado.
+    """
+    targets = {
+        old: min(counts.items(), key=lambda item: (-item[1], item[0]))[0]
+        for old, counts in mapping.items()
+    }
+    rows = conn.execute(
+        "SELECT id, fingerprint, status, notified_at, notified_through, "
+        "first_seen, last_seen FROM incidents ORDER BY id"
+    ).fetchall()
+    groups: dict[str, list[sqlite3.Row]] = {}
+    for row in rows:
+        old = str(row["fingerprint"])
+        groups.setdefault(targets.get(old, old), []).append(row)
+
+    for target, group in groups.items():
+        aggregate = conn.execute(
+            """
+            SELECT COUNT(*)          AS n,
+                   MIN(timestamp_utc) AS first_seen,
+                   MAX(timestamp_utc) AS last_seen,
+                   MAX(severity)      AS severity,
+                   MAX(category)      AS category,
+                   MAX(message)       AS sample_message
+            FROM events
+            WHERE fingerprint = ?
+            """,
+            (target,),
+        ).fetchone()
+        if aggregate is None or int(aggregate["n"] or 0) == 0:
+            for row in group:
+                conn.execute("DELETE FROM incidents WHERE id = ?", (row["id"],))
+            continue
+
+        primary = group[0]
+        for row in group[1:]:
+            conn.execute("DELETE FROM incidents WHERE id = ?", (row["id"],))
+        conn.execute(
+            """
+            UPDATE incidents
+            SET fingerprint = ?,
+                category = ?,
+                severity = ?,
+                sample_message = ?,
+                first_seen = ?,
+                last_seen = ?,
+                event_count = ?,
+                status = ?,
+                notified_at = ?,
+                notified_through = ?
+            WHERE id = ?
+            """,
+            (
+                target,
+                aggregate["category"],
+                int(aggregate["severity"] or 0),
+                aggregate["sample_message"],
+                aggregate["first_seen"] or primary["first_seen"],
+                aggregate["last_seen"] or primary["last_seen"],
+                int(aggregate["n"]),
+                _merge_status([str(row["status"]) for row in group]),
+                _max_iso([row["notified_at"] for row in group]),
+                _max_iso([row["notified_through"] for row in group]),
+                primary["id"],
+            ),
+        )
 
 
 def backfill(
@@ -47,6 +142,7 @@ def backfill(
     select = _ALL if recalc else _PENDING
     updated = 0
     last_id = 0
+    mapping: dict[str, Counter[str]] = {}
 
     with transaction(conn):
         while True:
@@ -56,14 +152,20 @@ def backfill(
             for row in rows:
                 text = row["message"] or row["raw_line"] or ""
                 category = rules.category(text)
+                new_fingerprint = event_fingerprint(category, text)
                 conn.execute(
                     "UPDATE events SET category = ?, fingerprint = ? WHERE id = ?",
-                    (category, event_fingerprint(category, text), row["id"]),
+                    (category, new_fingerprint, row["id"]),
                 )
+                if recalc and row["fingerprint"]:
+                    mapping.setdefault(str(row["fingerprint"]), Counter())[new_fingerprint] += 1
                 updated += 1
             last_id = rows[-1]["id"]
             if len(rows) < batch_size:
                 break
+
+        if recalc:
+            _resync_incidents(conn, mapping)
 
     return updated
 

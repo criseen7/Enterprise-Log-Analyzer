@@ -1,5 +1,8 @@
 name: Nightly evals
 
+permissions:
+  contents: read
+
 on:
   schedule:
     - cron: "17 4 * * *"
@@ -50,7 +53,7 @@ jobs:
         with:
           python-version: "3.14"
           cache: pip
-      - run: pip install -r requirements.txt -r requirements-dev.txt
+      - run: pip install -r requirements-evals.txt
       - name: run with model (skipped without key)
         if: env.ANTHROPIC_API_KEY != ''
         run: |

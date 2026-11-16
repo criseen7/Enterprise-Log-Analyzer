@@ -105,7 +105,8 @@ def format_run(agent_run: AgentRun) -> str:
             "Citas: "
             f"{len(citations.valid)} válidas, "
             f"{len(citations.invalid)} inventadas (eliminadas), "
-            f"{len(citations.uncited)} sin cita"
+            f"{len(citations.uncited)} sin cita, "
+            f"{len(citations.unsupported)} con cifras no sustentadas (eliminadas)"
         )
 
     lines.append("")
