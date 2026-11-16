@@ -261,10 +261,18 @@ def _set_status(
             incident_status=row["status"],
             pending_action=_pending(action),
             message=(
-                "El cambio está pendiente de aprobación humana. "
-                f"Para aprobarlo: `python -m app.mcp approve {action.id}`. "
-                "El comando devuelve un confirm_token; pásalo de vuelta en "
-                "la llamada siguiente con confirm_token=..."
+                (
+                    "La acción ya está aprobada y espera ejecución. "
+                    f"Recupera el token con `python -m app.mcp approve {action.id}` "
+                    "y pásalo de vuelta con confirm_token=..."
+                )
+                if action.status == hitl.APPROVED
+                else (
+                    "El cambio está pendiente de aprobación humana. "
+                    f"Para aprobarlo: `python -m app.mcp approve {action.id}`. "
+                    "El comando devuelve un confirm_token; pásalo de vuelta en "
+                    "la llamada siguiente con confirm_token=..."
+                )
             ),
         )
 

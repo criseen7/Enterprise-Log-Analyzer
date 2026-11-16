@@ -745,6 +745,106 @@ class HitlHardeningTests(McpTestCase):
         ).fetchone()[0]
         self.assertEqual(status, "OPEN")
 
+    def test_reutiliza_una_aprobacion_pendiente_de_ejecutar(self):
+        """Crear una PENDING nueva tiraría la aprobación que ya existe."""
+        first = self._pending()
+        action_id = first["pending_action"]["action_id"]
+        self._approve(action_id)
+
+        second = self._pending()
+        self.assertEqual(second["pending_action"]["action_id"], action_id)
+        self.assertEqual(second["pending_action"]["status"], hitl.APPROVED)
+        self.assertIn("ya está aprobada", second["message"])
+
+    def test_una_accion_caducada_no_se_reutiliza(self):
+        first = self._pending()
+        action_id = first["pending_action"]["action_id"]
+        self.conn.execute(
+            "UPDATE agent_actions SET expires_at = ? WHERE id = ?",
+            ("2000-01-01T00:00:00.000Z", action_id),
+        )
+
+        second = self._pending()
+        self.assertNotEqual(second["pending_action"]["action_id"], action_id)
+        old = hitl.get_action(self.conn, action_id)
+        self.assertIsNotNone(old)
+        self.assertEqual(old.status, hitl.EXPIRED)
+
+    def test_aprobar_una_caducada_la_marca_expirada(self):
+        action = hitl.create_action(
+            self.conn,
+            tool="set_incident_status",
+            params={"incident_id": self.incident_id, "status": "ACKNOWLEDGED"},
+        )
+        self.conn.execute(
+            "UPDATE agent_actions SET expires_at = ? WHERE id = ?",
+            ("2000-01-01T00:00:00.000Z", action.id),
+        )
+        with self.connect() as conn:
+            with self.assertRaises(hitl.HitlError):
+                hitl.approve_action(conn, action.id)
+        stored = hitl.get_action(self.conn, action.id)
+        self.assertIsNotNone(stored)
+        self.assertEqual(stored.status, hitl.EXPIRED)
+
+    def test_aprobar_una_accion_ejecutada_falla(self):
+        action_id = self._pending()["pending_action"]["action_id"]
+        self._approve(action_id)
+        with self.connect() as conn:
+            hitl.mark_executed(conn, action_id, result="ok")
+
+        with self.connect() as conn:
+            with self.assertRaises(hitl.HitlError):
+                hitl.approve_action(conn, action_id)
+
+    def test_mark_executed_sin_aprobacion_falla(self):
+        action_id = self._pending()["pending_action"]["action_id"]
+        with self.connect() as conn:
+            with self.assertRaises(hitl.HitlError):
+                hitl.mark_executed(conn, action_id)
+
+    def test_aprobar_no_rearma_una_accion_que_otro_proceso_ejecuto(self):
+        """CAS: una lectura vieja no puede pisar una transición ya hecha.
+
+        Se conserva el snapshot `PENDING` y se fuerza a `get_action` a
+        devolverlo aunque la base ya diga `EXECUTED`. El `UPDATE ... WHERE
+        status = PENDING` debe afectar 0 filas y fallar en vez de rearmar la
+        mutación.
+        """
+        action_id = self._pending()["pending_action"]["action_id"]
+        stale = hitl.get_action(self.conn, action_id)
+        self.assertIsNotNone(stale)
+        self._approve(action_id)
+        with self.connect() as conn:
+            hitl.mark_executed(conn, action_id, result="ok")
+
+        with mock.patch.object(hitl, "get_action", return_value=stale):
+            with self.connect() as conn:
+                with self.assertRaises(hitl.HitlError):
+                    hitl.approve_action(conn, action_id)
+
+        stored = hitl.get_action(self.conn, action_id)
+        self.assertIsNotNone(stored)
+        self.assertEqual(stored.status, hitl.EXECUTED)
+
+    def test_un_token_no_ascii_se_rechaza_sin_excepcion(self):
+        action_id = self._pending()["pending_action"]["action_id"]
+        action = self._approve(action_id)
+        self.assertFalse(
+            hitl.verify(
+                action,
+                tool="set_incident_status",
+                params={"incident_id": self.incident_id, "status": "ACKNOWLEDGED"},
+                token="ñ" * 64,
+            )
+        )
+
+    def test_list_actions_acota_el_limite(self):
+        for _ in range(hitl.MAX_ACTIONS + 5):
+            hitl.create_action(self.conn, tool="set_incident_status", params={})
+        self.assertEqual(len(hitl.list_actions(self.conn, limit=10_000)), hitl.MAX_ACTIONS)
+        self.assertEqual(len(hitl.list_actions(self.conn, limit=-1)), 1)
+
 
 class SecretTests(McpTestCase):
     def test_el_secreto_es_estable_y_queda_en_0600(self):
@@ -768,6 +868,32 @@ class SecretTests(McpTestCase):
 
         if os.name != "nt":
             self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+
+    def test_el_directorio_del_secreto_queda_en_0700(self):
+        with mock.patch.dict(os.environ, {hitl.SECRET_ENV_VAR: ""}):
+            hitl.load_secret()
+            directory = hitl.secret_path().parent
+        if os.name != "nt":
+            self.assertEqual(directory.stat().st_mode & 0o777, 0o700)
+
+    def test_no_sigue_un_symlink_hacia_otro_fichero(self):
+        path = hitl.secret_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        target = path.parent / "otro-fichero"
+        target.write_bytes(b"secreto ajeno")
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            pass
+        try:
+            os.symlink(target, path)
+        except (OSError, NotImplementedError):
+            self.skipTest("el sistema no admite symlinks")
+
+        with mock.patch.dict(os.environ, {hitl.SECRET_ENV_VAR: ""}):
+            with self.assertRaises(hitl.HitlError):
+                hitl.load_secret()
+        self.assertEqual(target.read_bytes(), b"secreto ajeno")
 
 
 class CliToolsTests(unittest.TestCase):
