@@ -256,7 +256,7 @@ docs/
   decisions/     ADR-001 … ADR-008
   evals/         methodology and published results
   traces/        a real, unedited agent trace
-tests/           339 tests, including engine purity and golden snapshots
+tests/           420 tests, including engine purity and golden snapshots
 ```
 
 ## Design decisions worth reading
