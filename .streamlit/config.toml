@@ -1,0 +1,12 @@
+# El dashboard no tiene autenticación propia y muestra logs: por defecto
+# escucha sólo en loopback. Dentro del contenedor el binding es 0.0.0.0
+# (STREAMLIT_SERVER_ADDRESS en el Dockerfile) y el límite lo pone el port
+# mapping de docker-compose.yml, que publica en 127.0.0.1.
+[server]
+address = "127.0.0.1"
+headless = true
+enableXsrfProtection = true
+enableCORS = true
+
+[browser]
+gatherUsageStats = false

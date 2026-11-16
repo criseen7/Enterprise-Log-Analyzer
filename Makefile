@@ -36,10 +36,10 @@ seed: ## Genera logs sintéticos para el demo
 	$(PY) tools/generate_sample_logs.py
 
 dashboard: ## Levanta el dashboard en sólo lectura (default)
-	ELA_ADMIN_MODE=0 streamlit run app/ui/app.py
+	ELA_ADMIN_MODE=0 streamlit run app/ui/app.py --server.address 127.0.0.1
 
 dashboard-admin: ## Levanta el dashboard con escrituras habilitadas
-	ELA_ADMIN_MODE=1 streamlit run app/ui/app.py
+	ELA_ADMIN_MODE=1 streamlit run app/ui/app.py --server.address 127.0.0.1
 
 demo: migrate seed ## Prepara la base y genera datos de ejemplo
 	@echo "Listo. Siguiente: make dashboard"

@@ -209,18 +209,53 @@ Dashboard (optional, separate extra):
 
 ```bash
 pip install -e ".[dashboard]"
-streamlit run app/ui/app.py
+streamlit run app/ui/app.py   # http://127.0.0.1:8501, loopback only
 ```
+
+The dashboard has no authentication of its own and shows log data, so it
+listens on `127.0.0.1` by default. For remote access, keep the loopback binding
+and use a tunnel or a proxy with TLS and auth (see below); don't publish the
+port.
 
 Docker, three services — analyzer, dashboard, MCP — on one database:
 
 ```bash
 docker compose up --build
-# dashboard  http://localhost:8501
-# MCP        http://localhost:8000/mcp  (sólo loopback; para acceso remoto, proxy con TLS y auth)
+# dashboard  http://localhost:8501        (loopback only: no auth of its own)
+# MCP        http://localhost:8000/mcp    (loopback only: the SDK has no auth)
 ```
 
 Claude Desktop config: [`docs/mcp-config.json`](docs/mcp-config.json).
+
+### Remote access
+
+Both the dashboard and the MCP server publish on `127.0.0.1` only: neither has
+its own authentication and both expose log data. To reach them from another
+machine, keep the loopback binding and add a tunnel or a proxy.
+
+SSH tunnel, no extra services:
+
+```bash
+ssh -N -L 8501:127.0.0.1:8501 user@host
+# then open http://localhost:8501 locally
+```
+
+Reverse proxy with TLS and auth (Caddy on the same host):
+
+```caddyfile
+logs.example.com {
+    basic_auth {
+        ops <password-hash>   # caddy hash-password
+    }
+    reverse_proxy 127.0.0.1:8501
+}
+```
+
+Caddy terminates TLS and proxies the WebSocket; Streamlit stays bound to
+loopback. If you serve it under a path, set `server.baseUrlPath`. Don't publish
+`8501` or `8000` directly: XSRF protection is not authentication, and admin mode
+only gates writes. A VPN (Tailscale, WireGuard) is the alternative when you
+don't want to run a proxy at all.
 
 ---
 
@@ -256,7 +291,7 @@ docs/
   decisions/     ADR-001 … ADR-008
   evals/         methodology and published results
   traces/        a real, unedited agent trace
-tests/           436 tests, including engine purity and golden snapshots
+tests/           442 tests, including engine purity and golden snapshots
 ```
 
 ## Design decisions worth reading
