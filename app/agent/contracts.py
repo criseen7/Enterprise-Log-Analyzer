@@ -61,7 +61,9 @@ class Plan(BaseModel):
     symptom: str
     restatement: str
     steps: list[PlanStep]
-    max_steps: int = 8
+    # El valor que emite el modelo no es una garantía: `validate_shape` acepta
+    # un límite del llamador y lo impone por encima de este campo.
+    max_steps: int = Field(default=8, ge=1)
 
     @field_validator("steps")
     @classmethod
@@ -70,16 +72,20 @@ class Plan(BaseModel):
             raise ValueError("el plan necesita al menos un paso")
         return steps
 
-    def validate_shape(self, allowed_tools: set[str]) -> None:
+    def validate_shape(self, allowed_tools: set[str], *, max_steps: int | None = None) -> None:
         """Comprueba el plan contra la lista blanca y la aritmética de pasos.
 
         Se ejecuta *antes* de ninguna llamada: un plan con una tool inventada o
         con una dependencia imposible se rechaza sin gastar tokens ni tiempo.
+
+        `max_steps` es el límite del llamador. Sin él, un modelo que emite
+        `max_steps=10000` y diez mil pasos se validaría contra sí mismo.
         """
-        if len(self.steps) > self.max_steps:
-            raise ValueError(
-                f"el plan tiene {len(self.steps)} pasos; el máximo es {self.max_steps}"
-            )
+        limit = self.max_steps if max_steps is None else max_steps
+        if limit < 1:
+            raise ValueError(f"max_steps debe ser >= 1, no {limit}")
+        if len(self.steps) > limit:
+            raise ValueError(f"el plan tiene {len(self.steps)} pasos; el máximo es {limit}")
 
         ids = [step.step_id for step in self.steps]
         if len(ids) != len(set(ids)):

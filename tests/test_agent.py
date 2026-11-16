@@ -169,6 +169,32 @@ class PlanValidationTests(unittest.TestCase):
         tools = {step.tool for step in plan.steps}
         self.assertNotIn("set_incident_status", tools)
 
+    def test_el_maximo_de_pasos_del_llamador_manda_sobre_el_del_modelo(self):
+        payload = {
+            "symptom": "x",
+            "restatement": "x",
+            "max_steps": 10_000,
+            "steps": [
+                {"step_id": i, "hypothesis": f"paso {i}", "tool": "system_health"}
+                for i in range(1, 10)
+            ],
+        }
+        with self.assertRaises(ValueError):
+            planner.parse_plan(payload, max_steps=8)
+
+    def test_el_plan_aceptado_queda_rotulado_con_el_limite_real(self):
+        payload = {
+            "symptom": "x",
+            "restatement": "x",
+            "max_steps": 10_000,
+            "steps": [
+                {"step_id": 1, "hypothesis": "a", "tool": "system_health"},
+                {"step_id": 2, "hypothesis": "b", "tool": "top_errors"},
+            ],
+        }
+        plan = planner.parse_plan(payload, max_steps=8)
+        self.assertEqual(plan.max_steps, 8)
+
 
 class ExecutorTests(AgentFixture):
     def test_el_placeholder_se_resuelve_con_la_huella_del_motor(self):

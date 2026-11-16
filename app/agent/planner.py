@@ -179,7 +179,9 @@ def parse_plan(payload: dict[str, Any] | str) -> Plan:
     else:
         data = payload
     plan = Plan.model_validate(data)
-    plan.validate_shape(PLANNABLE_TOOLS)
+    plan.validate_shape(PLANNABLE_TOOLS, max_steps=max_steps)
+    if max_steps is not None:
+        plan = plan.model_copy(update={"max_steps": max_steps})
     return plan
 
 
@@ -211,7 +213,10 @@ def llm_plan(
         temperature=0.0,
         response_schema=Plan,
     )
-    plan = parse_plan(response.data if response.data is not None else response.text)
+    plan = parse_plan(
+        response.data if response.data is not None else response.text,
+        max_steps=max_steps,
+    )
     return plan, response
 
 
