@@ -114,7 +114,7 @@ def _manage(incidents: list[dict]) -> None:
     left, middle, right = st.columns(3)
     if left.button(
         "Reconocer (ACK)",
-        use_container_width=True,
+        width="stretch",
         disabled=not manage_ok or current == "ACKNOWLEDGED",
         help="Marca el incidente como visto sin cerrarlo.",
     ):
@@ -125,7 +125,7 @@ def _manage(incidents: list[dict]) -> None:
         st.rerun()
     if middle.button(
         "Resolver",
-        use_container_width=True,
+        width="stretch",
         disabled=not manage_ok or current == "RESOLVED",
         help="Cierra el incidente. Un rebrote posterior lo reabrirá como nuevo.",
     ):
@@ -136,7 +136,7 @@ def _manage(incidents: list[dict]) -> None:
         st.rerun()
     if right.button(
         "Reabrir (OPEN)",
-        use_container_width=True,
+        width="stretch",
         disabled=not manage_ok or current == "OPEN",
         help="Reabre y reinicia el cooldown: la próxima ocurrencia vuelve a notificar.",
     ):
@@ -157,7 +157,7 @@ def _exports() -> None:
         data=csv_bytes,
         file_name="incidents.csv",
         mime="text/csv",
-        use_container_width=True,
+        width="stretch",
         help="UTF-8 con BOM: abre en Excel sin problemas de acentos.",
     )
     right.download_button(
@@ -165,7 +165,7 @@ def _exports() -> None:
         data=html_text,
         file_name="incidents.html",
         mime="text/html",
-        use_container_width=True,
+        width="stretch",
         help="Archivo autocontenido: se abre sin conexión ni dependencias.",
     )
 
@@ -216,7 +216,7 @@ def render(selected: EventFilters) -> None:
     )
     if action_left.button(
         "Evaluar ahora",
-        use_container_width=True,
+        width="stretch",
         disabled=not evaluate_ok,
         help="Recorre la ventana visible y abre/actualiza incidentes por fingerprint.",
     ):
@@ -294,7 +294,7 @@ def render(selected: EventFilters) -> None:
             "Un pico de pocos eventos frente a cero es ruido, no una incidencia.",
         )
     elif spikes:
-        st.plotly_chart(charts.hourly_with_spikes(series, spikes), use_container_width=True)
+        st.plotly_chart(charts.hourly_with_spikes(series, spikes), width="stretch")
         tables.spikes_table(spikes)
         st.caption(
             f"Media y desviación se calculan sin la hora evaluada (leave-one-out): "
@@ -303,7 +303,7 @@ def render(selected: EventFilters) -> None:
             "eventos por hora."
         )
     else:
-        st.plotly_chart(charts.hourly_with_spikes(series, []), use_container_width=True)
+        st.plotly_chart(charts.hourly_with_spikes(series, []), width="stretch")
         st.info(
             f"Ninguna hora supera z ≥ {analysis.anomaly_zscore} con al menos "
             f"{analysis.anomaly_min_samples} eventos."

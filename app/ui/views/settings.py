@@ -115,7 +115,7 @@ def render(selected: EventFilters) -> None:
         if admin
         else False
     )
-    if ingest_col.button("Ingerir ahora", use_container_width=True, disabled=not ingest_ok):
+    if ingest_col.button("Ingerir ahora", width="stretch", disabled=not ingest_ok):
         with st.spinner("Leyendo logs…"):
             message = _run_ingest()
         audit.record("ingest", detail=message)
@@ -127,7 +127,7 @@ def render(selected: EventFilters) -> None:
         if admin
         else False
     )
-    if backfill_col.button("Rellenar huellas", use_container_width=True, disabled=not backfill_ok):
+    if backfill_col.button("Rellenar huellas", width="stretch", disabled=not backfill_ok):
         rules = ErrorRules.load(settings.analysis.rules_path)
         with connection() as conn:
             touched = backfill(conn, rules)
@@ -142,7 +142,7 @@ def render(selected: EventFilters) -> None:
     )
     if recalc_col.button(
         "Reclasificar todo",
-        use_container_width=True,
+        width="stretch",
         disabled=not recalc_ok,
         help="--recalc: reescribe la categoría de todos los eventos",
     ):
@@ -153,7 +153,7 @@ def render(selected: EventFilters) -> None:
         cache.clear_caches()
         st.success(f"eventos reclasificados: {format_int(touched)}")
         st.rerun()
-    if cache_col.button("Limpiar caché", use_container_width=True):
+    if cache_col.button("Limpiar caché", width="stretch"):
         cache.clear_caches()
         st.success("Caché de consultas vaciada.")
         st.rerun()
@@ -171,7 +171,7 @@ def render(selected: EventFilters) -> None:
             "categoría": [rule.category for rule in rules],
             "patrones": [" · ".join(rule.patterns) for rule in rules],
         },
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
     )
 

@@ -44,7 +44,7 @@ def events_table(rows: list[dict]) -> None:
     )
     st.dataframe(
         frame,
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
         height=min(120 + 35 * max(len(frame), 1), 620),
         column_config={
@@ -104,7 +104,7 @@ def ranking_table(rows: list[dict], *, kind: str = "errores") -> None:
     )
     st.dataframe(
         frame,
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
         height=min(90 + 35 * max(len(frame), 1), 620),
         column_config={
@@ -125,7 +125,7 @@ def spikes_table(rows: list[dict]) -> None:
             "desv": [round(row["stdev"], 2) for row in rows],
         }
     )
-    st.dataframe(frame, use_container_width=True, hide_index=True)
+    st.dataframe(frame, width="stretch", hide_index=True)
 
 
 def runs_table(rows: list[dict]) -> None:
@@ -147,7 +147,7 @@ def runs_table(rows: list[dict]) -> None:
     )
     st.dataframe(
         frame,
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
         column_config={
             "inicio": st.column_config.DatetimeColumn("inicio", format="MM-DD HH:mm:ss")
@@ -174,7 +174,7 @@ def incidents_table(rows: list[dict]) -> None:
     )
     st.dataframe(
         frame,
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
         height=min(90 + 35 * max(len(frame), 1), 620),
         column_config={
@@ -204,7 +204,7 @@ def files_table(rows: list[dict]) -> None:
     )
     st.dataframe(
         frame,
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
         column_config={"visto": st.column_config.DatetimeColumn("visto", format="MM-DD HH:mm:ss")},
     )
