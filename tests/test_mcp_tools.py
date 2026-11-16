@@ -363,6 +363,32 @@ class CompareWindowsTests(McpTestCase):
         self.assertEqual(data["baseline"]["stddev"], 0.0)
         self.assertEqual(data["verdict"], "elevated")
 
+    def test_share_of_errors_no_supera_uno_con_eventos_no_error(self):
+        """El numerador se filtra a ERROR: INFO/WARN no inflan la proporción."""
+        self.add_event(
+            ts="2026-10-08T10:10:00.000Z",
+            message="pool agotado",
+            fingerprint="fp_share",
+            severity=45,
+        )
+        for minute in range(20, 23):
+            self.add_event(
+                ts=f"2026-10-08T10:{minute}:00.000Z",
+                message="pool agotado",
+                fingerprint="fp_share",
+                severity=30,
+            )
+        data = self.payload(
+            "compare_windows",
+            {
+                "fingerprint": "fp_share",
+                "since": "2026-10-08T10:00:00Z",
+                "until": "2026-10-08T11:00:00Z",
+            },
+        )
+        self.assertEqual(data["window"]["count"], 4)
+        self.assertEqual(data["window"]["share_of_errors"], 1.0)
+
     def test_una_huella_inexistente_es_un_error_legible(self):
         result = self.call("compare_windows", {"fingerprint": "no_existe"})
         self.assertTrue(result.is_error)

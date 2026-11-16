@@ -183,7 +183,10 @@ def _window_stats(
 
     `share_of_errors` usa el total de errores de esa misma ventana como
     denominador: un fingerprint con 40 de 4.000 errores y otro con 40 de 40
-    pesan igual en el conteo, pero no en el mismo tipo de ventana.
+    pesan igual en el conteo, pero no en el mismo tipo de ventana. El numerador
+    se filtra a `severity >= ERROR`: si contara también INFO/WARN, una huella
+    con muchos eventos informativos podría "pesar" más que todos los errores de
+    la ventana y la métrica superaría 1.
     """
     row = conn.execute(
         """
@@ -209,6 +212,16 @@ def _window_stats(
     ).fetchone()
     errors_in_window = int(total_errors[0]) if total_errors else 0
 
+    fingerprint_errors = conn.execute(
+        """
+        SELECT COUNT(*) FROM events
+        WHERE fingerprint = ? AND severity >= ?
+          AND timestamp_utc >= ? AND timestamp_utc < ?
+        """,
+        (fingerprint, ERROR, since, until),
+    ).fetchone()
+    errors_of_fingerprint = int(fingerprint_errors[0]) if fingerprint_errors else 0
+
     hourly = _hourly_series(conn, fingerprint, since, until)
     hours = len(hourly) or 1
     count = int(row["n"] or 0)
@@ -221,7 +234,7 @@ def _window_stats(
         until=until,
         count=count,
         rate_per_hour=count / hours,
-        share_of_errors=(count / errors_in_window) if errors_in_window else 0.0,
+        share_of_errors=(errors_of_fingerprint / errors_in_window if errors_in_window else 0.0),
         distinct_services=int(row["services"] or 0),
         hours=hours,
         hourly=hourly,

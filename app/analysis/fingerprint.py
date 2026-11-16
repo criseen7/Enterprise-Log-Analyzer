@@ -23,6 +23,7 @@ pertenecen a categorías distintas son errores distintos (ver ADR-004).
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 import re
 
 # Longitud de la huella en hex: 64 bits. Colisiones con un dataset de ~10^6
@@ -39,13 +40,34 @@ _ISO_TS = re.compile(
 _CLF_TS = re.compile(r"\b\d{2}/[A-Za-z]{3}/\d{4}:\d{2}:\d{2}:\d{2}\s*[+-]\d{4}\b")
 _DATE = re.compile(r"\b\d{4}-\d{2}-\d{2}\b")
 _IPV4 = re.compile(r"\b\d{1,3}(?:\.\d{1,3}){3}\b")
+_MAC = re.compile(r"\b(?:[0-9a-fA-F]{2}[:-]){5}[0-9a-fA-F]{2}\b")
+# Candidato amplio; `ipaddress` descarta lo que no es una IPv6 real. El regex
+# solo no basta: `12:34:56` parece una IPv6 comprimida y es una hora.
+_IPV6_CANDIDATE = re.compile(
+    r"(?<![\w:])(?:[0-9a-fA-F]{0,4}:){2,7}"
+    r"(?:\d{1,3}(?:\.\d{1,3}){3}|[0-9a-fA-F]{1,4})"
+    r"(?:%[0-9A-Za-z_.-]+)?(?![\w:])"
+)
 _HEX_0X = re.compile(r"\b0x[0-9a-fA-F]+\b")
-_HEX = re.compile(r"\b[0-9a-fA-F]{8,}\b")
+# Al menos una letra: un ID puramente numérico de 8+ dígitos es un número, no
+# un hash. Sin esto, `user 1234567` y `user 12345678` acaban en huellas
+# distintas sólo por la longitud.
+_HEX = re.compile(r"\b(?=[0-9a-fA-F]*[a-fA-F])[0-9a-fA-F]{8,}\b")
 # Sin límites de palabra: "user u123", "order_9871" o "30000ms" deben
 # normalizarse aunque los dígitos peguen con letras. Con `\b` en ambos lados,
 # "u123" no se toca y dos errores idénticos salvo el identificador acaban en
 # fingerprints distintos, que es exactamente lo que la huella existe para evitar.
 _NUMBER = re.compile(r"\d+(?:\.\d+)?")
+
+
+def _replace_ipv6(match: re.Match[str]) -> str:
+    token = match.group(0)
+    address = token.split("%", 1)[0]
+    try:
+        ipaddress.IPv6Address(address)
+    except ValueError:
+        return token
+    return "<IP>"
 
 
 def normalize_message(message: str | None) -> str:
@@ -64,6 +86,9 @@ def normalize_message(message: str | None) -> str:
     text = _ISO_TS.sub("<TS>", text)
     text = _CLF_TS.sub("<TS>", text)
     text = _DATE.sub("<TS>", text)
+    text = _MAC.sub("<MAC>", text)
+    # IPv6 antes que IPv4: `::ffff:192.0.2.128` se reconoce entero, no partido.
+    text = _IPV6_CANDIDATE.sub(_replace_ipv6, text)
     text = _IPV4.sub("<IP>", text)
     text = _HEX_0X.sub("<HEX>", text)
     text = _HEX.sub("<HEX>", text)

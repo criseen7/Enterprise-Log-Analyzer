@@ -68,6 +68,31 @@ class FingerprintTests(unittest.TestCase):
         self.assertEqual(normalize_message("user u123 failed"), "user u<NUM> failed")
         self.assertEqual(normalize_message("order_9871 failed"), "order_<NUM> failed")
 
+    def test_ipv6_y_mac_se_normalizan(self):
+        self.assertEqual(
+            normalize_message("from 2001:db8::1 and fe80::1ff:fe23:4567:890a"),
+            "from <IP> and <IP>",
+        )
+        self.assertEqual(
+            normalize_message("origen ::ffff:192.0.2.128"),
+            "origen <IP>",
+        )
+        self.assertEqual(
+            normalize_message("mac 00:1a:2b:3c:4d:5e"),
+            "mac <MAC>",
+        )
+        self.assertEqual(
+            normalize_message("mac 00-1A-2B-3C-4D-5E"),
+            "mac <MAC>",
+        )
+
+    def test_una_hora_no_se_confunde_con_ipv6(self):
+        self.assertEqual(normalize_message("a las 12:34:56"), "a las <NUM>:<NUM>:<NUM>")
+
+    def test_un_id_numerico_largo_no_se_trata_como_hex(self):
+        self.assertEqual(normalize_message("user 12345678"), "user <NUM>")
+        self.assertEqual(normalize_message("user 1234567"), "user <NUM>")
+
     def test_no_normaliza_el_caso(self):
         """Decisión: no se unen mensajes con distinto caso (ver ADR-004)."""
         self.assertNotEqual(
