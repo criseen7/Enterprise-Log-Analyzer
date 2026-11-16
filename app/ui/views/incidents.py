@@ -63,10 +63,15 @@ def _banner(counts: dict[str, int]) -> None:
     columns[2].metric("RESOLVED", format_int(resolved))
 
 
-def _evaluate_now() -> None:
-    """Evalúa la ventana y hace upsert de incidentes. Es una escritura."""
+def _evaluate_now(window_minutes: int, min_count: int, min_severity: int | None) -> None:
+    """Evalúa la ventana visible y hace upsert de incidentes. Es una escritura."""
     with connection() as conn:
-        result = evaluate_incidents(conn)
+        result = evaluate_incidents(
+            conn,
+            window_minutes=window_minutes,
+            min_count=min_count,
+            min_severity=min_severity,
+        )
     audit.record(
         "incident.evaluate",
         evaluated=bool(result["evaluated"]),
@@ -180,36 +185,6 @@ def render(selected: EventFilters) -> None:
         "está cerrado. Reabrir reinicia el cooldown para que la próxima "
         "ocurrencia vuelva a notificar."
     )
-    action_left, action_right = st.columns([1, 2])
-    admin = settings.ui.admin_mode
-    evaluate_ok = (
-        confirm.typed_confirmation(action_left, word="EVALUAR", key="confirm_evaluate")
-        if admin
-        else False
-    )
-    if action_left.button(
-        "Evaluar ahora",
-        use_container_width=True,
-        disabled=not evaluate_ok,
-        help="Recorre la ventana y abre/actualiza incidentes por fingerprint.",
-    ):
-        _evaluate_now()
-    with action_right:
-        _exports()
-
-    incidents = cache.incidents()
-    tables.incidents_table(incidents)
-    if admin:
-        _manage(incidents)
-    else:
-        st.info(
-            "La gestión de estados está deshabilitada: el dashboard está en "
-            "**sólo lectura**. Actívala con `ELA_ADMIN_MODE=1` (o "
-            "`ui.admin_mode: true`).",
-            icon="🔒",
-        )
-
-    st.divider()
     analysis = settings.analysis
     left, right = st.columns([2, 1])
     with left:
@@ -232,6 +207,36 @@ def render(selected: EventFilters) -> None:
             step=1,
         )
 
+    action_left, action_right = st.columns([1, 2])
+    admin = settings.ui.admin_mode
+    evaluate_ok = (
+        confirm.typed_confirmation(action_left, word="EVALUAR", key="confirm_evaluate")
+        if admin
+        else False
+    )
+    if action_left.button(
+        "Evaluar ahora",
+        use_container_width=True,
+        disabled=not evaluate_ok,
+        help="Recorre la ventana visible y abre/actualiza incidentes por fingerprint.",
+    ):
+        _evaluate_now(window, min_count, selected.min_severity)
+    with action_right:
+        _exports()
+
+    incidents = cache.incidents()
+    tables.incidents_table(incidents)
+    if admin:
+        _manage(incidents)
+    else:
+        st.info(
+            "La gestión de estados está deshabilitada: el dashboard está en "
+            "**sólo lectura**. Actívala con `ELA_ADMIN_MODE=1` (o "
+            "`ui.admin_mode: true`).",
+            icon="🔒",
+        )
+
+    st.divider()
     patterns = cache.recurrence(
         window_minutes=window, min_count=min_count, min_severity=selected.min_severity, limit=None
     )
@@ -242,7 +247,7 @@ def render(selected: EventFilters) -> None:
     columns[1].metric("Eventos en la ventana", format_int(total_in_window))
     columns[2].metric(
         "Umbral de incidente",
-        format_int(analysis.incident_threshold),
+        format_int(min_count),
         help="Eventos del mismo fingerprint en la ventana a partir de los cuales "
         "se abre un incidente.",
     )
@@ -250,10 +255,10 @@ def render(selected: EventFilters) -> None:
     st.divider()
     st.subheader(f"Recurrencia en los últimos {window} minutos")
     if patterns:
-        if any(row["count"] >= analysis.incident_threshold for row in patterns):
+        if any(row["count"] >= min_count for row in patterns):
             st.error(
                 "Hay fingerprints por encima del umbral de incidente "
-                f"({analysis.incident_threshold}). Pulsa «Evaluar ahora» para abrirlos.",
+                f"({min_count}). Pulsa «Evaluar ahora» para abrirlos.",
                 icon="🚨",
             )
         else:
