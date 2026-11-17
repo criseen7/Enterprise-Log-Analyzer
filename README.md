@@ -135,9 +135,14 @@ loglens approve <action_id>   # prints a short-lived HMAC-SHA256 confirm_token
 ```
 
 Only then does the retry succeed. The agent cannot mint its own token: the
-secret lives in `LOGLENS_HITL_SECRET` or in a `0600` file next to the database.
-Every attempt, approval, rejection, and execution is appended to the audit
-table.
+secret lives in `LOGLENS_HITL_SECRET` (at least 32 random bytes; weak values are
+rejected) or in a `0600` file next to the database. Mutable state lives in
+`agent_actions`; every transition is appended to the append-only `hitl_audit`
+table, with actor and timestamp. Use `loglens history <action_id>` to read it.
+
+`--approved-by`/`--rejected-by` are audit labels, not authentication: this
+single-user local release does not authenticate the CLI operator. A multi-user
+release must derive the actor from an authenticated session instead.
 
 ---
 

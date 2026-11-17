@@ -7,6 +7,7 @@ secuencia "leer versión → aplicar script → registrar".
 
 from __future__ import annotations
 
+import sqlite3
 import tempfile
 import threading
 import time
@@ -97,7 +98,7 @@ class IncidentWatermarkMigrationTests(unittest.TestCase):
             )
             conn.close()
 
-            self.assertIn(8, migrate(db_path))
+            self.assertIn(8, migrate(db_path, target=8))
 
             conn = connect(db_path)
             try:
@@ -114,6 +115,96 @@ class IncidentWatermarkMigrationTests(unittest.TestCase):
                 self.assertIsNone(rows["sin-notificar"]["notified_through"])
             finally:
                 conn.close()
+
+
+class HitlAuditMigrationTests(unittest.TestCase):
+    def test_v8_a_v9_backfill_el_historial_y_separa_el_rechazo(self):
+        with tempfile.TemporaryDirectory(prefix="ela-migrate-v9-") as tmp:
+            db_path = Path(tmp) / "app.db"
+            conn = connect(db_path)
+            conn.execute(
+                "CREATE TABLE schema_version (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)"
+            )
+            conn.executemany(
+                "INSERT INTO schema_version (version, applied_at) VALUES (?, '2026-01-01T00:00:00Z')",
+                [(version,) for version in range(1, 9)],
+            )
+            conn.execute(
+                "CREATE TABLE agent_actions ("
+                "id TEXT PRIMARY KEY, tool TEXT NOT NULL, params TEXT NOT NULL, "
+                "status TEXT NOT NULL DEFAULT 'PENDING', confirm_token TEXT, "
+                "created_at TEXT NOT NULL, expires_at TEXT NOT NULL, "
+                "approved_at TEXT, approved_by TEXT, executed_at TEXT, result TEXT)"
+            )
+            conn.executemany(
+                "INSERT INTO agent_actions (id, tool, params, status, confirm_token, "
+                "created_at, expires_at, approved_at, approved_by, executed_at, result) "
+                "VALUES (?, 't', '{}', ?, ?, ?, ?, ?, ?, ?, ?)",
+                [
+                    (
+                        "rechazada",
+                        "REJECTED",
+                        None,
+                        "2026-10-01T10:00:00.000Z",
+                        "2026-10-01T10:15:00.000Z",
+                        "2026-10-01T10:05:00.000Z",
+                        "bob",
+                        None,
+                        None,
+                    ),
+                    (
+                        "ejecutada",
+                        "EXECUTED",
+                        "abc",
+                        "2026-10-01T11:00:00.000Z",
+                        "2026-10-01T11:15:00.000Z",
+                        "2026-10-01T11:05:00.000Z",
+                        "alice",
+                        "2026-10-01T11:06:00.000Z",
+                        "ok",
+                    ),
+                ],
+            )
+            conn.close()
+
+            self.assertIn(9, migrate(db_path))
+
+            conn = connect(db_path)
+            try:
+                columns = {
+                    str(row["name"])
+                    for row in conn.execute("SELECT name FROM pragma_table_info('agent_actions')")
+                }
+                self.assertIn("rejected_at", columns)
+                self.assertIn("rejected_by", columns)
+
+                rows = {
+                    str(row["id"]): row
+                    for row in conn.execute(
+                        "SELECT id, approved_by, rejected_at, rejected_by FROM agent_actions"
+                    )
+                }
+                self.assertEqual(rows["rechazada"]["rejected_by"], "bob")
+                self.assertEqual(rows["rechazada"]["rejected_at"], "2026-10-01T10:05:00.000Z")
+                self.assertEqual(rows["ejecutada"]["approved_by"], "alice")
+                self.assertIsNone(rows["ejecutada"]["rejected_by"])
+
+                events = {
+                    (str(row["action_id"]), str(row["event"]))
+                    for row in conn.execute("SELECT action_id, event FROM hitl_audit")
+                }
+                self.assertIn(("rechazada", "REJECTED"), events)
+                self.assertNotIn(("rechazada", "APPROVED"), events)
+                self.assertIn(("ejecutada", "CREATED"), events)
+                self.assertIn(("ejecutada", "APPROVED"), events)
+                self.assertIn(("ejecutada", "EXECUTED"), events)
+
+                with self.assertRaises(sqlite3.IntegrityError):
+                    conn.execute("DELETE FROM hitl_audit WHERE action_id = 'rechazada'")
+            finally:
+                conn.close()
+
+            self.assertEqual(migrate(db_path), [])
 
 
 if __name__ == "__main__":

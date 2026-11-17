@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import io
 import os
+import sqlite3
 import unittest
 from contextlib import redirect_stdout
 from typing import Any
@@ -961,12 +962,12 @@ class SecretTests(McpTestCase):
     def test_endurece_los_permisos_de_un_secreto_existente(self):
         path = hitl.secret_path()
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(b"x" * 64)
+        path.write_bytes(b"correct-horse-battery-staple-2026")
         if os.name != "nt":
             os.chmod(path, 0o644)
 
         with mock.patch.dict(os.environ, {hitl.SECRET_ENV_VAR: ""}):
-            self.assertEqual(hitl.load_secret(), b"x" * 64)
+            self.assertEqual(hitl.load_secret(), b"correct-horse-battery-staple-2026")
 
         if os.name != "nt":
             self.assertEqual(path.stat().st_mode & 0o777, 0o600)
@@ -996,6 +997,119 @@ class SecretTests(McpTestCase):
             with self.assertRaises(hitl.HitlError):
                 hitl.load_secret()
         self.assertEqual(target.read_bytes(), b"secreto ajeno")
+
+    def test_rechaza_un_secreto_de_entorno_corto_sin_caer_al_fichero(self):
+        with mock.patch.dict(os.environ, {hitl.SECRET_ENV_VAR: "corto"}):
+            with self.assertRaises(hitl.HitlError):
+                hitl.load_secret()
+        self.assertFalse(hitl.secret_path().exists())
+
+    def test_rechaza_un_secreto_de_entorno_degenerado(self):
+        with mock.patch.dict(os.environ, {hitl.SECRET_ENV_VAR: "a" * 64}):
+            with self.assertRaises(hitl.HitlError):
+                hitl.load_secret()
+
+    def test_rechaza_un_valor_de_ejemplo(self):
+        with mock.patch.dict(os.environ, {hitl.SECRET_ENV_VAR: "change-me"}):
+            with self.assertRaises(hitl.HitlError):
+                hitl.load_secret()
+
+    def test_rechaza_un_secreto_de_fichero_degradado(self):
+        path = hitl.secret_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"x" * 64)
+        with mock.patch.dict(os.environ, {hitl.SECRET_ENV_VAR: ""}):
+            with self.assertRaises(hitl.HitlError) as raised:
+                hitl.load_secret()
+        # Un solo HitlError: `load_secret` no lo re-envuelve como ValueError.
+        self.assertIsNone(raised.exception.__cause__)
+
+    def test_acepta_un_secreto_de_entorno_fuerte_y_lo_usa_para_firmar(self):
+        value = "0123456789abcdef" * 4
+        with mock.patch.dict(os.environ, {hitl.SECRET_ENV_VAR: value}):
+            action = hitl.create_action(self.conn, tool="t", params={})
+            approved = hitl.approve_action(self.conn, action.id)
+            expected = hitl.compute_token(
+                value.encode("ascii"), action.id, action.tool, action.params, action.expires_at
+            )
+            self.assertEqual(approved.confirm_token, expected)
+            self.assertTrue(
+                hitl.verify(approved, tool=action.tool, params=action.params, token=expected)
+            )
+        self.assertFalse(hitl.secret_path().exists())
+
+
+class HitlAuditTests(McpTestCase):
+    """El historial append-only y la etiqueta del operador."""
+
+    KEY = b"0123456789abcdef" * 4
+
+    def _pending(self) -> hitl.Action:
+        return hitl.create_action(self.conn, tool="t", params={})
+
+    def test_cada_transicion_queda_en_el_historial(self):
+        action = self._pending()
+        approved = hitl.approve_action(self.conn, action.id, approved_by="alice", secret=self.KEY)
+        hitl.mark_executed(self.conn, action.id, result="ok")
+        events = hitl.list_action_events(self.conn, action.id)
+        self.assertEqual(
+            [event["event"] for event in events],
+            [hitl.CREATED, hitl.APPROVED, hitl.EXECUTED],
+        )
+        self.assertEqual(events[1]["actor"], "alice")
+        self.assertEqual(events[1]["occurred_at"], approved.approved_at)
+
+    def test_rechazar_tras_aprobar_conserva_al_aprobador(self):
+        action = self._pending()
+        hitl.approve_action(self.conn, action.id, approved_by="alice", secret=self.KEY)
+        rejected = hitl.reject_action(self.conn, action.id, rejected_by="bob")
+        stored = hitl.get_action(self.conn, action.id)
+        self.assertEqual(stored.approved_by, "alice")
+        self.assertEqual(stored.rejected_by, "bob")
+        self.assertEqual(rejected.approved_by, "alice")
+        events = hitl.list_action_events(self.conn, action.id)
+        self.assertEqual(
+            [event["event"] for event in events],
+            [hitl.CREATED, hitl.APPROVED, hitl.REJECTED],
+        )
+        self.assertEqual(events[2]["actor"], "bob")
+
+    def test_hitl_audit_no_admite_cambios_ni_borrados(self):
+        action = self._pending()
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.conn.execute(
+                "UPDATE hitl_audit SET actor = 'otro' WHERE action_id = ?", (action.id,)
+            )
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.conn.execute("DELETE FROM hitl_audit WHERE action_id = ?", (action.id,))
+
+    def test_expire_stale_registra_el_vencimiento(self):
+        action = hitl.create_action(self.conn, tool="t", params={}, ttl_seconds=-1)
+        self.assertEqual(hitl.expire_stale(self.conn), 1)
+        events = hitl.list_action_events(self.conn, action.id)
+        self.assertEqual([event["event"] for event in events], [hitl.CREATED, hitl.EXPIRED])
+
+    def test_actor_se_normaliza_y_se_valida(self):
+        action = self._pending()
+        approved = hitl.approve_action(
+            self.conn, action.id, approved_by="  José  ", secret=self.KEY
+        )
+        self.assertEqual(approved.approved_by, "José")
+
+        other = self._pending()
+        for actor in ("", "   ", "a\nb", "x" * (hitl.MAX_ACTOR_CHARS + 1)):
+            with self.assertRaises(hitl.HitlError):
+                hitl.approve_action(self.conn, other.id, approved_by=actor, secret=self.KEY)
+
+    def test_historial_por_cli(self):
+        action = self._pending()
+        hitl.approve_action(self.conn, action.id, approved_by="alice", secret=self.KEY)
+        output = io.StringIO()
+        with redirect_stdout(output):
+            code = main(["history", action.id])
+        self.assertEqual(code, 0)
+        self.assertIn("APPROVED", output.getvalue())
+        self.assertIn("alice", output.getvalue())
 
 
 class WindowCapTests(McpTestCase):

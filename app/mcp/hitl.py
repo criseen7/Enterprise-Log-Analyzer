@@ -24,6 +24,11 @@ Por qué la acción vive en la base y no en memoria: el servidor MCP y la CLI
 de operador son **dos procesos distintos**. Si el pendiente viviera en memoria,
 el token no podría cruzar entre ellos y el flujo de aprobación sólo existiría
 dentro de las pruebas.
+
+`agent_actions` guarda el estado mutable; `hitl_audit` es el historial
+append-only de cada transición. `approved_by`/`rejected_by` son etiquetas de
+auditoría escritas por la CLI del operador, **no una identidad autenticada**:
+en un despliegue multiusuario deben venir de la sesión, no de un flag.
 """
 
 from __future__ import annotations
@@ -53,6 +58,11 @@ EXPIRED = "EXPIRED"
 
 VALID_STATUSES = (PENDING, APPROVED, EXECUTED, REJECTED, EXPIRED)
 
+# Eventos de la tabla append-only. `CREATED` no es un estado: es el momento en
+# que el agente dejó la petición, antes de que exista una aprobación.
+CREATED = "CREATED"
+AUDIT_EVENTS = (CREATED, APPROVED, EXECUTED, REJECTED, EXPIRED)
+
 # Caducidad por defecto de una aprobación: 15 minutos. Suficiente para que una
 # persona mire la pantalla, consulte y responda; demasiado corto para que un
 # token robado de un log sirva de algo.
@@ -66,9 +76,66 @@ MAX_ACTIONS = 200
 # Variable de entorno con la clave del HMAC. Si está, manda sobre el fichero.
 SECRET_ENV_VAR = "LOGLENS_HITL_SECRET"
 
+# Un HMAC-SHA256 necesita una clave con entropía real. La ruta automática
+# genera 64 hex (32 bytes), y la explícita se valida con los mismos criterios.
+MIN_SECRET_BYTES = 32
+MIN_SECRET_DISTINCT_BYTES = 8
+WEAK_SECRET_VALUES = (
+    "secret",
+    "changeme",
+    "change-me",
+    "password",
+    "operator",
+    "test",
+    "testing",
+    "default",
+    "loglens",
+)
+
+# La identidad del operador es una etiqueta de auditoría, no autenticación.
+MAX_ACTOR_CHARS = 128
+
 
 class HitlError(ValueError):
     """Fallo de aprobación previsto: la tool lo convierte en `ToolError`."""
+
+
+def _validate_secret(value: bytes, *, source: str) -> bytes:
+    """Rechaza claves cortas, degeneradas o de ejemplo, sin revelar su valor."""
+    if len(value) < MIN_SECRET_BYTES:
+        raise HitlError(
+            f"{source} es demasiado corto: usa al menos {MIN_SECRET_BYTES} bytes aleatorios"
+        )
+    if value != value.strip():
+        raise HitlError(f"{source} no debe empezar ni terminar con espacios o saltos")
+    if len(set(value)) < MIN_SECRET_DISTINCT_BYTES:
+        raise HitlError(f"{source} tiene demasiada poca variedad; usa bytes aleatorios")
+    text = value.decode("utf-8", errors="replace").strip().lower()
+    if any(
+        text == token or (token in text and text.replace(token, "") == "")
+        for token in WEAK_SECRET_VALUES
+    ):
+        raise HitlError(f"{source} es un valor de ejemplo; genera uno con `secrets.token_hex(32)`")
+    return value
+
+
+def _normalize_actor(value: str, *, field: str) -> str:
+    """Limpia la etiqueta del operador antes de escribirla en la auditoría.
+
+    No es autenticación: cualquiera que pueda ejecutar la CLI puede declarar
+    quién aprobó. Sí se garantiza que el valor sea una sola línea acotada, para
+    que no rompa los registros ni permita inyectar líneas falsas.
+    """
+    if not isinstance(value, str):
+        raise HitlError(f"{field} debe ser texto")
+    actor = value.strip()
+    if not actor:
+        raise HitlError(f"{field} no puede estar vacío")
+    if len(actor) > MAX_ACTOR_CHARS:
+        raise HitlError(f"{field} es demasiado largo (máximo {MAX_ACTOR_CHARS} caracteres)")
+    if any(ord(char) < 0x20 or ord(char) == 0x7F for char in actor):
+        raise HitlError(f"{field} no puede contener caracteres de control")
+    return actor
 
 
 @dataclass(frozen=True)
@@ -86,6 +153,8 @@ class Action:
     approved_by: str | None = None
     executed_at: str | None = None
     result: str | None = None
+    rejected_at: str | None = None
+    rejected_by: str | None = None
 
 
 def _now() -> datetime:
@@ -130,11 +199,13 @@ def load_secret(settings: Settings | None = None) -> bytes:
        Existe para que la instalación funcione sin configuración y para que el
        servidor MCP y la CLI (procesos distintos) compartan la misma clave.
 
-    La clave nunca se registra ni se devuelve en una respuesta de la tool.
+    Las dos rutas se validan con los mismos criterios: si la variable existe
+    pero es débil, falla en vez de caer al fichero en silencio. La clave nunca
+    se registra ni se devuelve en una respuesta de la tool.
     """
     env = os.environ.get(SECRET_ENV_VAR)
     if env:
-        return env.encode("utf-8")
+        return _validate_secret(env.encode("utf-8"), source=SECRET_ENV_VAR)
 
     settings = settings or get_settings()
     path = secret_path(settings)
@@ -143,7 +214,13 @@ def load_secret(settings: Settings | None = None) -> bytes:
     except FileNotFoundError:
         # Otro proceso lo borró entre `exists()` y `read`: se crea.
         pass
+    except HitlError:
+        # `_read_secret` ya valida y traduce sus propios fallos: volver a
+        # envolver aquí duplicaría la cadena de causas de un `HitlError`.
+        raise
     except ValueError as exc:
+        # Defensa perezosa: un `ValueError` ajeno a `read_private` también debe
+        # llegar como fallo de aprobación, no como un error opaco.
         raise HitlError(str(exc)) from exc
 
     ensure_private_dir(path.parent)
@@ -151,11 +228,12 @@ def load_secret(settings: Settings | None = None) -> bytes:
 
 
 def _read_secret(path: Path) -> bytes:
-    """Lee el secreto sin seguir symlinks y lo deja en 0600."""
+    """Lee el secreto sin seguir symlinks, lo valida y lo deja en 0600."""
     try:
-        return read_private(path)
+        value = read_private(path)
     except ValueError as exc:
         raise HitlError(str(exc)) from exc
+    return _validate_secret(value, source=f"el secreto de {path}")
 
 
 def _create_secret(path: Path) -> bytes:
@@ -204,6 +282,14 @@ def compute_token(
     ).hexdigest()
 
 
+def _field(row: sqlite3.Row, name: str) -> str | None:
+    """Lee una columna de texto opcional, tolerando filas pre-v9."""
+    if name not in row.keys():
+        return None
+    value = row[name]
+    return None if value is None else str(value)
+
+
 def _row_to_action(row: sqlite3.Row) -> Action:
     try:
         params = json.loads(row["params"])
@@ -219,16 +305,39 @@ def _row_to_action(row: sqlite3.Row) -> Action:
         confirm_token=row["confirm_token"],
         created_at=str(row["created_at"]),
         expires_at=str(row["expires_at"]),
-        approved_at=row["approved_at"],
-        approved_by=row["approved_by"],
-        executed_at=row["executed_at"],
-        result=row["result"],
+        approved_at=_field(row, "approved_at"),
+        approved_by=_field(row, "approved_by"),
+        executed_at=_field(row, "executed_at"),
+        result=_field(row, "result"),
+        rejected_at=_field(row, "rejected_at"),
+        rejected_by=_field(row, "rejected_by"),
     )
 
 
 def _canonical_params(params: dict[str, object]) -> str:
     """JSON canónico para comparar parámetros sin depender del orden de claves."""
     return json.dumps(params, sort_keys=True, separators=(",", ":"))
+
+
+def _record_event(
+    conn: sqlite3.Connection,
+    action_id: str,
+    event: str,
+    *,
+    actor: str | None = None,
+    occurred_at: str | None = None,
+    detail: str | None = None,
+) -> None:
+    """Escribe un evento en el registro append-only, en la transacción actual."""
+    if event not in AUDIT_EVENTS:
+        raise ValueError(f"evento inválido: {event!r}")
+    conn.execute(
+        """
+        INSERT INTO hitl_audit (action_id, event, actor, occurred_at, detail)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        (action_id, event, actor, occurred_at or _stamp(_now()), detail),
+    )
 
 
 def create_action(
@@ -246,21 +355,23 @@ def create_action(
     now = _now()
     expires_at = _stamp(now + timedelta(seconds=ttl_seconds))
     action_id = secrets.token_urlsafe(12)
-    conn.execute(
-        """
-        INSERT INTO agent_actions
-            (id, tool, params, status, confirm_token, created_at, expires_at)
-        VALUES (?, ?, ?, ?, NULL, ?, ?)
-        """,
-        (
-            action_id,
-            tool,
-            _canonical_params(params),
-            PENDING,
-            _stamp(now),
-            expires_at,
-        ),
-    )
+    with _immediate(conn):
+        conn.execute(
+            """
+            INSERT INTO agent_actions
+                (id, tool, params, status, confirm_token, created_at, expires_at)
+            VALUES (?, ?, ?, ?, NULL, ?, ?)
+            """,
+            (
+                action_id,
+                tool,
+                _canonical_params(params),
+                PENDING,
+                _stamp(now),
+                expires_at,
+            ),
+        )
+        _record_event(conn, action_id, CREATED, occurred_at=_stamp(now), detail=tool)
     return Action(
         id=action_id,
         tool=tool,
@@ -301,6 +412,24 @@ def list_actions(
     return [_row_to_action(row) for row in conn.execute(sql, params)]
 
 
+def list_action_events(
+    conn: sqlite3.Connection, action_id: str, *, limit: int = MAX_ACTIONS
+) -> list[dict[str, object]]:
+    """Historial append-only de una acción, en orden cronológico."""
+    limit = max(1, min(int(limit), MAX_ACTIONS))
+    rows = conn.execute(
+        """
+        SELECT seq, action_id, event, actor, occurred_at, detail
+          FROM hitl_audit
+         WHERE action_id = ?
+         ORDER BY seq
+         LIMIT ?
+        """,
+        (action_id, limit),
+    )
+    return [dict(row) for row in rows]
+
+
 def expire_stale(conn: sqlite3.Connection, *, now: datetime | None = None) -> int:
     """Marca como `EXPIRED` las aprobaciones y pendientes caducadas.
 
@@ -310,6 +439,15 @@ def expire_stale(conn: sqlite3.Connection, *, now: datetime | None = None) -> in
     """
     stamp = _stamp(now or _now())
     with _immediate(conn):
+        stale = [
+            str(row["id"])
+            for row in conn.execute(
+                "SELECT id FROM agent_actions WHERE status IN (?, ?) AND expires_at < ?",
+                (PENDING, APPROVED, stamp),
+            )
+        ]
+        if not stale:
+            return 0
         cursor = conn.execute(
             """
             UPDATE agent_actions
@@ -318,6 +456,8 @@ def expire_stale(conn: sqlite3.Connection, *, now: datetime | None = None) -> in
             """,
             (EXPIRED, PENDING, APPROVED, stamp),
         )
+        for action_id in stale:
+            _record_event(conn, action_id, EXPIRED, occurred_at=stamp)
         return cursor.rowcount
 
 
@@ -398,12 +538,14 @@ def approve_action(
     """Aprueba una acción y emite su `confirm_token`.
 
     Es la mitad humana del flujo: la ejecuta el operador, no el agente. Por eso
-    esta función **no** está expuesta como tool MCP.
+    esta función **no** está expuesta como tool MCP. `approved_by` es una
+    etiqueta de auditoría, no una identidad autenticada.
 
     La transición es compare-and-swap: sólo `PENDING -> APPROVED`. Si otro
     proceso ya la ejecutó, el `UPDATE` no toca ninguna fila y la aprobación
     falla en vez de rearmar una mutación que ya ocurrió.
     """
+    approved_by = _normalize_actor(approved_by, field="approved_by")
     key = secret if secret is not None else load_secret()
     expire_stale(conn)
     with _immediate(conn):
@@ -447,6 +589,9 @@ def approve_action(
                 f"conflicto al aprobar {action_id!r}: la acción cambió de estado "
                 f"({state}). No se aplicó ningún cambio."
             )
+        _record_event(
+            conn, action_id, APPROVED, actor=approved_by, occurred_at=now, detail=action.tool
+        )
         return Action(
             id=action.id,
             tool=action.tool,
@@ -463,7 +608,12 @@ def approve_action(
 def reject_action(
     conn: sqlite3.Connection, action_id: str, *, rejected_by: str = "operator"
 ) -> Action:
-    """Rechaza una acción pendiente o aprobada, sin tocar una ejecutada."""
+    """Rechaza una acción pendiente o aprobada, sin tocar una ejecutada.
+
+    El rechazo se registra en sus propias columnas: sobrescribir
+    `approved_at`/`approved_by` borraría quién aprobó realmente la acción.
+    """
+    rejected_by = _normalize_actor(rejected_by, field="rejected_by")
     expire_stale(conn)
     with _immediate(conn):
         action = get_action(conn, action_id)
@@ -481,7 +631,7 @@ def reject_action(
         cursor = conn.execute(
             """
             UPDATE agent_actions
-               SET status = ?, approved_at = ?, approved_by = ?
+               SET status = ?, confirm_token = NULL, rejected_at = ?, rejected_by = ?
              WHERE id = ? AND status IN (?, ?)
             """,
             (REJECTED, now, rejected_by, action_id, PENDING, APPROVED),
@@ -493,6 +643,9 @@ def reject_action(
                 f"conflicto al rechazar {action_id!r}: la acción cambió de estado "
                 f"({state}). No se aplicó ningún cambio."
             )
+        _record_event(
+            conn, action_id, REJECTED, actor=rejected_by, occurred_at=now, detail=action.tool
+        )
         return Action(
             id=action.id,
             tool=action.tool,
@@ -501,21 +654,24 @@ def reject_action(
             confirm_token=None,
             created_at=action.created_at,
             expires_at=action.expires_at,
-            approved_at=now,
-            approved_by=rejected_by,
+            approved_at=action.approved_at,
+            approved_by=action.approved_by,
+            rejected_at=now,
+            rejected_by=rejected_by,
         )
 
 
 def mark_executed(conn: sqlite3.Connection, action_id: str, *, result: str = "") -> None:
     """Cierra la acción como ejecutada, sólo si estaba `APPROVED`."""
     with _immediate(conn):
+        now = _stamp(_now())
         cursor = conn.execute(
             """
             UPDATE agent_actions
                SET status = ?, executed_at = ?, result = ?
              WHERE id = ? AND status = ?
             """,
-            (EXECUTED, _stamp(_now()), result, action_id, APPROVED),
+            (EXECUTED, now, result, action_id, APPROVED),
         )
         if cursor.rowcount != 1:
             current = get_action(conn, action_id)
@@ -524,6 +680,7 @@ def mark_executed(conn: sqlite3.Connection, action_id: str, *, result: str = "")
                 f"la acción {action_id!r} no está aprobada (estado: {state}); "
                 "no se puede marcar como ejecutada"
             )
+        _record_event(conn, action_id, EXECUTED, occurred_at=now, detail=result)
 
 
 def verify(
@@ -559,14 +716,20 @@ def verify(
 
 __all__ = [
     "APPROVED",
+    "AUDIT_EVENTS",
+    "CREATED",
     "DEFAULT_TTL_SECONDS",
     "EXECUTED",
     "EXPIRED",
     "MAX_ACTIONS",
+    "MAX_ACTOR_CHARS",
+    "MIN_SECRET_BYTES",
+    "MIN_SECRET_DISTINCT_BYTES",
     "PENDING",
     "REJECTED",
     "SECRET_ENV_VAR",
     "VALID_STATUSES",
+    "WEAK_SECRET_VALUES",
     "Action",
     "HitlError",
     "approve_action",
@@ -577,6 +740,7 @@ __all__ = [
     "find_pending",
     "get_action",
     "is_expired",
+    "list_action_events",
     "list_actions",
     "load_secret",
     "mark_executed",

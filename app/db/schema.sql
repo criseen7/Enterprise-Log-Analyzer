@@ -148,12 +148,41 @@ CREATE TABLE IF NOT EXISTS agent_actions (
     expires_at    TEXT    NOT NULL,
     approved_at   TEXT,
     approved_by   TEXT,
+    rejected_at   TEXT,
+    rejected_by   TEXT,
     executed_at   TEXT,
     result        TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_agent_actions_status  ON agent_actions (status, created_at);
 CREATE INDEX IF NOT EXISTS idx_agent_actions_expires ON agent_actions (expires_at);
+
+-- Historial append-only: el estado mutable vive en agent_actions; aquí queda
+-- constancia de cada transición, con actor y timestamp. Triggers impiden
+-- UPDATE/DELETE desde la aplicación; no sustituyen a un almacén externo.
+CREATE TABLE IF NOT EXISTS hitl_audit (
+    seq         INTEGER PRIMARY KEY AUTOINCREMENT,
+    action_id   TEXT NOT NULL,
+    event       TEXT NOT NULL,
+    actor       TEXT,
+    occurred_at TEXT NOT NULL,
+    detail      TEXT,
+    FOREIGN KEY (action_id) REFERENCES agent_actions(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_hitl_audit_action ON hitl_audit (action_id, seq);
+
+CREATE TRIGGER IF NOT EXISTS trg_hitl_audit_no_update
+BEFORE UPDATE ON hitl_audit
+BEGIN
+    SELECT RAISE(ABORT, 'hitl_audit es append-only');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_hitl_audit_no_delete
+BEFORE DELETE ON hitl_audit
+BEGIN
+    SELECT RAISE(ABORT, 'hitl_audit es append-only');
+END;
 
 -- Corridas del agente (v6).
 --

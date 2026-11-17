@@ -112,8 +112,14 @@ loglens approve <action_id>   # imprime un confirm_token HMAC-SHA256 con TTL
 ```
 
 Sólo entonces el reintento funciona. El agente no puede fabricar su propio
-token: el secreto vive en `LOGLENS_HITL_SECRET` o en un fichero `0600` junto a
-la base. Cada intento, aprobación, rechazo y ejecución se audita.
+token: el secreto vive en `LOGLENS_HITL_SECRET` (al menos 32 bytes aleatorios;
+los valores débiles se rechazan) o en un fichero `0600` junto a la base. El
+estado mutable vive en `agent_actions`; cada transición se añade a `hitl_audit`,
+una tabla solo-append con actor y timestamp. Consulta `loglens history <action_id>`.
+
+`--approved-by`/`--rejected-by` son etiquetas de auditoría, no autenticación:
+en esta versión local monousuario la CLI no autentica al operador. Una versión
+multiusuario debe obtener el actor de una sesión autenticada.
 
 ---
 
