@@ -4,6 +4,28 @@ All notable changes to LogLens are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project uses
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- Append-only `hitl_audit` table with one event per HITL transition, actor and
+  timestamp; readable with `loglens history <action_id>`.
+
+### Changed
+
+- Rejection now has its own `rejected_at`/`rejected_by` columns and no longer
+  overwrites who approved the action (schema v9).
+- GitHub Actions pinned to Node 24 releases and runners fixed to `ubuntu-26.04`.
+- `approved_by`/`rejected_by` documented as audit labels, not authentication.
+
+### Security
+
+- `LOGLENS_HITL_SECRET` and the secret file are validated: at least 32 bytes,
+  enough variety and no placeholder values. An invalid variable fails closed
+  instead of falling back to the file.
+- Actor labels are normalized and length-limited before being written to the
+  audit trail; audit events cannot be updated or deleted from the application.
+
 ## [0.1.0] — 2026-10-23
 
 First public release. The product is LogLens; the repository is
