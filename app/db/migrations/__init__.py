@@ -44,6 +44,7 @@ _deltas: dict[int, Path] = {
     6: MIGRATIONS_DIR / "_006_agent_runs.sql",
     7: MIGRATIONS_DIR / "_007_log_files_head_hash.sql",
     8: MIGRATIONS_DIR / "_008_incident_notified_through.sql",
+    9: MIGRATIONS_DIR / "_009_hitl_audit.sql",
 }
 
 # Versiones que entrega la baseline. Debe ser exactamente los deltas cargados:
@@ -92,12 +93,61 @@ def _delta_008_already_applied(conn) -> bool:
     return True
 
 
+_DELTA_009_BACKFILL = """
+UPDATE agent_actions
+   SET rejected_at = approved_at, rejected_by = approved_by
+ WHERE status = 'REJECTED' AND approved_at IS NOT NULL AND rejected_at IS NULL;
+
+INSERT INTO hitl_audit (action_id, event, actor, occurred_at, detail)
+SELECT id, 'CREATED', NULL, created_at, tool FROM agent_actions
+ WHERE NOT EXISTS (
+    SELECT 1 FROM hitl_audit h WHERE h.action_id = agent_actions.id AND h.event = 'CREATED'
+ );
+
+INSERT INTO hitl_audit (action_id, event, actor, occurred_at, detail)
+SELECT id, 'APPROVED', approved_by, approved_at, tool FROM agent_actions
+ WHERE status IN ('APPROVED', 'EXECUTED') AND approved_at IS NOT NULL
+   AND NOT EXISTS (
+    SELECT 1 FROM hitl_audit h WHERE h.action_id = agent_actions.id AND h.event = 'APPROVED'
+ );
+
+INSERT INTO hitl_audit (action_id, event, actor, occurred_at, detail)
+SELECT id, 'REJECTED', rejected_by, rejected_at, tool FROM agent_actions
+ WHERE status = 'REJECTED' AND rejected_at IS NOT NULL
+   AND NOT EXISTS (
+    SELECT 1 FROM hitl_audit h WHERE h.action_id = agent_actions.id AND h.event = 'REJECTED'
+ );
+
+INSERT INTO hitl_audit (action_id, event, actor, occurred_at, detail)
+SELECT id, 'EXECUTED', NULL, executed_at, tool FROM agent_actions
+ WHERE executed_at IS NOT NULL
+   AND NOT EXISTS (
+    SELECT 1 FROM hitl_audit h WHERE h.action_id = agent_actions.id AND h.event = 'EXECUTED'
+ );
+"""
+
+
+def _delta_009_already_applied(conn) -> bool:
+    """True si `_009` ya creó las columnas y la tabla de auditoría.
+
+    `ALTER TABLE ... ADD COLUMN` falla si el DDL se aplicó pero la versión no
+    llegó a registrarse. El backfill se reafirma porque es idempotente.
+    """
+    if not _column_exists(conn, "agent_actions", "rejected_by"):
+        return False
+    if not _table_exists(conn, "hitl_audit"):
+        return False
+    conn.executescript(_DELTA_009_BACKFILL)
+    return True
+
+
 # Deltas que no son re-ejecutables en SQL puro. El guard detecta si el efecto ya
 # está presente y, de ser así, sólo reafirma su parte idempotente.
 _DELTA_GUARDS: dict[int, Callable[[sqlite3.Connection], bool]] = {
     3: _delta_003_already_applied,
     7: _delta_007_already_applied,
     8: _delta_008_already_applied,
+    9: _delta_009_already_applied,
 }
 
 

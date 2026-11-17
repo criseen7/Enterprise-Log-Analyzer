@@ -10,7 +10,11 @@ Subcomandos:
   acto humano del flujo HITL: el token que sale de aquí es lo que autoriza la
   mutación.
 * `reject` — rechaza una acción.
+* `history` — muestra el registro append-only de una acción.
 * `tools` — lista las tools registradas.
+
+`--approved-by`/`--rejected-by` son etiquetas de auditoría, no credenciales:
+la identidad del operador no se autentica en esta versión monousuario.
 
 El subcomando `approve` es la otra mitad del bucle de aprobación: el servidor
 MCP y esta CLI son procesos distintos, y la acción pendiente vive en la base
@@ -23,7 +27,7 @@ import argparse
 import sys
 
 from app.mcp import hitl
-from app.mcp._context import write_connection
+from app.mcp._context import read_connection, write_connection
 from app.mcp.server import SERVER_NAME, SERVER_VERSION, build_server
 
 
@@ -71,6 +75,19 @@ def _cmd_reject(args: argparse.Namespace) -> int:
             print(f"No se pudo rechazar: {exc}", file=sys.stderr)
             return 1
     print(f"Acción {args.action_id} rechazada.")
+    return 0
+
+
+def _cmd_history(args: argparse.Namespace) -> int:
+    with read_connection() as conn:
+        events = hitl.list_action_events(conn, args.action_id)
+    if not events:
+        print(f"No hay eventos para la acción {args.action_id!r}.")
+        return 1
+    for event in events:
+        who = event["actor"] or "-"
+        detail = f"  {event['detail']}" if event["detail"] else ""
+        print(f"{event['occurred_at']}  {event['event']:<9} {who}{detail}")
     return 0
 
 
@@ -126,13 +143,27 @@ def build_parser() -> argparse.ArgumentParser:
 
     approve = sub.add_parser("approve", help="Aprueba una acción y emite su token.")
     approve.add_argument("action_id")
-    approve.add_argument("--approved-by", default="operator")
+    approve.add_argument(
+        "--approved-by",
+        default="operator",
+        help="Etiqueta de auditoría del operador (no es autenticación).",
+    )
     approve.set_defaults(func=_cmd_approve)
 
     reject = sub.add_parser("reject", help="Rechaza una acción.")
     reject.add_argument("action_id")
-    reject.add_argument("--approved-by", default="operator")
+    reject.add_argument(
+        "--rejected-by",
+        "--approved-by",
+        dest="approved_by",
+        default="operator",
+        help="Etiqueta de auditoría del operador (no es autenticación).",
+    )
     reject.set_defaults(func=_cmd_reject)
+
+    history = sub.add_parser("history", help="Muestra el historial de una acción.")
+    history.add_argument("action_id")
+    history.set_defaults(func=_cmd_history)
 
     tools = sub.add_parser("tools", help="Lista las tools registradas.")
     tools.set_defaults(func=_cmd_tools)
