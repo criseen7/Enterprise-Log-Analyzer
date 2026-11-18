@@ -17,7 +17,7 @@ la forma de la cláusula (qué columnas, no qué valores).
 from __future__ import annotations
 
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from app.parser.severity import ERROR
 
@@ -26,6 +26,10 @@ from app.parser.severity import ERROR
 # significar una cosa. Se traduce en `where()` a `category IS NULL`.
 BLANK_CATEGORY = "(sin categoría)"
 BLANK_SERVICE = "(sin servicio)"
+
+# El tokenizer `trigram` de FTS5 no indexa términos de 1 o 2 caracteres. Para
+# ésos se mantiene el LIKE escapado de siempre: es lento, pero acierta.
+MIN_FTS_CHARS = 3
 
 EVENT_COLUMNS = (
     "e.id",
@@ -50,6 +54,11 @@ def _like(term: str) -> str:
     """
     escaped = term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
     return f"%{escaped}%"
+
+
+def _fts_phrase(term: str) -> str:
+    """Un término literal en la sintaxis de FTS5, sin comodines ni operadores."""
+    return '"' + term.replace('"', '""') + '"'
 
 
 @dataclass(frozen=True)
@@ -99,17 +108,48 @@ class EventFilters:
         if self.unparsed_only:
             clauses.append(f"{alias}.parsed_ok = 0")
         if self.search:
-            clauses.append(
-                f"({alias}.message LIKE ? ESCAPE '\\' OR {alias}.raw_line LIKE ? ESCAPE '\\')"
-            )
-            params.extend((_like(self.search), _like(self.search)))
+            if len(self.search.strip()) >= MIN_FTS_CHARS:
+                clauses.append(
+                    f"{alias}.id IN (SELECT rowid FROM events_fts WHERE events_fts MATCH ?)"
+                )
+                params.append(_fts_phrase(self.search))
+            else:
+                clauses.append(
+                    f"({alias}.message LIKE ? ESCAPE '\\' OR {alias}.raw_line LIKE ? ESCAPE '\\')"
+                )
+                params.extend((_like(self.search), _like(self.search)))
 
         text = (" WHERE " + " AND ".join(clauses)) if clauses else ""
         return text, params
 
 
+def _bounded_filters(conn: sqlite3.Connection, filters: EventFilters) -> EventFilters:
+    """Acota al dataset lo que no trae ventana explícita.
+
+    `severity >= ?` solo deja al planificador recorrer `idx_events_ts` en orden
+    inverso para satisfacer el ORDER BY: la paginación parecía usar un índice
+    mientras hacía un `SCAN e`. Los límites del dataset son datos, no una
+    decisión del usuario, y no cambian el resultado: sólo convierten ese scan en
+    un `SEARCH` acotado. Si hay timestamps NULL no se acota, porque comparar por
+    texto los dejaría fuera.
+    """
+    if filters.since is not None or filters.until is not None or filters.unparsed_only:
+        return filters
+    if conn.execute("SELECT 1 FROM events WHERE timestamp_utc IS NULL LIMIT 1").fetchone():
+        return filters
+    first, last = data_time_bounds(conn)
+    if first is None or last is None:
+        return filters
+    # El rango es semiabierto, pero no se puede sumar 1 ms: los timestamps
+    # mezclan formatos canónicos (`...00.000Z`) y de segundo entero (`...00Z`),
+    # y comparados como texto el segundo entero va DESPUÉS del milisegundo.
+    # `\uffff` es cualquier carácter mayor que los de un timestamp, así que
+    # `last + '\uffff'` incluye el último evento sin excluir los siguientes.
+    return replace(filters, since=first, until=last + "\uffff")
+
+
 def count_events_filtered(conn: sqlite3.Connection, filters: EventFilters) -> int:
-    where, params = filters.where()
+    where, params = _bounded_filters(conn, filters).where()
     row = conn.execute(f"SELECT COUNT(*) FROM events e{where}", params).fetchone()
     return int(row[0]) if row else 0
 
@@ -128,7 +168,7 @@ def fetch_events(
     """
     if limit <= 0:
         raise ValueError("limit debe ser > 0")
-    where, params = filters.where()
+    where, params = _bounded_filters(conn, filters).where()
     columns = ", ".join(EVENT_COLUMNS)
     return list(
         conn.execute(
@@ -171,22 +211,29 @@ def data_time_bounds(conn: sqlite3.Connection) -> tuple[str | None, str | None]:
     return (row[0], row[1])
 
 
-def explain_plan(conn: sqlite3.Connection, filters: EventFilters) -> list[str]:
+def explain_plan(
+    conn: sqlite3.Connection,
+    filters: EventFilters,
+    *,
+    limit: int = 100,
+    offset: int = 0,
+) -> list[str]:
     """Plan de ejecución del listado de eventos. Se muestra en Settings.
 
     Es la prueba visible de la promesa "los filtros usan índices": quien lo dude
-    lo abre desde la propia aplicación en vez de leer el código.
+    lo abre desde la propia aplicación en vez de leer el código. Incluye el
+    `OFFSET` para que el plan que se inspecciona sea el de la consulta paginada.
     """
-    where, params = filters.where()
+    where, params = _bounded_filters(conn, filters).where()
     rows = conn.execute(
         f"""
         EXPLAIN QUERY PLAN
         SELECT e.id FROM events e
         LEFT JOIN log_files lf ON lf.id = e.file_id{where}
         ORDER BY e.timestamp_utc DESC, e.id DESC
-        LIMIT ?
+        LIMIT ? OFFSET ?
         """,
-        [*params, 100],
+        [*params, limit, offset],
     ).fetchall()
     return [str(row[3]) for row in rows]
 

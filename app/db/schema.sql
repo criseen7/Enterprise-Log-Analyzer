@@ -90,6 +90,29 @@ CREATE INDEX IF NOT EXISTS idx_events_parsed      ON events (parsed_ok, parse_er
 CREATE INDEX IF NOT EXISTS idx_events_cat_ts      ON events (category, timestamp_utc);
 -- El índice de UNIQUE(file_id, offset) lo crea SQLite automáticamente.
 
+-- Búsqueda de texto: `LIKE '%…%'` no puede usar un índice B-tree. La tabla FTS
+-- externa comparte el rowid de `events` y los triggers mantienen el índice al
+-- día; `trigram` permite buscar substring, no sólo prefijos de palabra.
+CREATE VIRTUAL TABLE IF NOT EXISTS events_fts USING fts5(
+    message, raw_line,
+    content='events', content_rowid='id',
+    tokenize='trigram'
+);
+CREATE TRIGGER IF NOT EXISTS events_fts_ai AFTER INSERT ON events BEGIN
+    INSERT INTO events_fts(rowid, message, raw_line)
+    VALUES (new.id, new.message, new.raw_line);
+END;
+CREATE TRIGGER IF NOT EXISTS events_fts_ad AFTER DELETE ON events BEGIN
+    INSERT INTO events_fts(events_fts, rowid, message, raw_line)
+    VALUES ('delete', old.id, old.message, old.raw_line);
+END;
+CREATE TRIGGER IF NOT EXISTS events_fts_au AFTER UPDATE ON events BEGIN
+    INSERT INTO events_fts(events_fts, rowid, message, raw_line)
+    VALUES ('delete', old.id, old.message, old.raw_line);
+    INSERT INTO events_fts(rowid, message, raw_line)
+    VALUES (new.id, new.message, new.raw_line);
+END;
+
 -- Incidentes: un registro por fingerprint problemático, no por evento.
 CREATE TABLE IF NOT EXISTS incidents (
     id              INTEGER PRIMARY KEY,

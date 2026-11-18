@@ -46,6 +46,7 @@ _deltas: dict[int, Path] = {
     8: MIGRATIONS_DIR / "_008_incident_notified_through.sql",
     9: MIGRATIONS_DIR / "_009_hitl_audit.sql",
     10: MIGRATIONS_DIR / "_010_log_files_device.sql",
+    11: MIGRATIONS_DIR / "_011_events_fts.sql",
 }
 
 # Versiones que entrega la baseline. Debe ser exactamente los deltas cargados:
@@ -218,6 +219,22 @@ def _delta_010_already_applied(conn) -> bool:
     return True
 
 
+def _delta_011_already_applied(conn) -> bool:
+    """Salta la FTS donde no hay `events` y reafirma un aplicación parcial.
+
+    Los tests aislados de HITL construyen bases sintéticas sin tabla `events`:
+    el delta no puede crear triggers sobre una tabla inexistente, pero la versión
+    sí debe quedar registrada. Si la FTS ya está creada, el script es idempotente
+    y se reejecuta para recuperar un fallo entre el DDL y el `_record`.
+    """
+    if not _table_exists(conn, "events"):
+        return True
+    if _table_exists(conn, "events_fts"):
+        conn.executescript(_deltas[11].read_text(encoding="utf-8"))
+        return True
+    return False
+
+
 # Deltas que no son re-ejecutables en SQL puro. El guard detecta si el efecto ya
 # está presente y, de ser así, sólo reafirma su parte idempotente.
 _DELTA_GUARDS: dict[int, Callable[[sqlite3.Connection], bool]] = {
@@ -226,6 +243,7 @@ _DELTA_GUARDS: dict[int, Callable[[sqlite3.Connection], bool]] = {
     8: _delta_008_already_applied,
     9: _delta_009_already_applied,
     10: _delta_010_already_applied,
+    11: _delta_011_already_applied,
 }
 
 

@@ -342,7 +342,7 @@ class DeviceIdentityMigrationTests(unittest.TestCase):
     def test_v9_a_v10_anyade_dev_y_amplia_la_clave(self):
         with tempfile.TemporaryDirectory(prefix="ela-migrate-v10-") as tmp:
             db_path = _v9_db(tmp)
-            self.assertEqual(migrate(db_path), [10])
+            self.assertEqual(migrate(db_path), [10, 11])
             self.assertEqual(migrate(db_path), [], "idempotente")
             self.assertEqual(status(db_path), (SCHEMA_VERSION, SCHEMA_VERSION))
 
@@ -388,7 +388,7 @@ class DeviceIdentityMigrationTests(unittest.TestCase):
             conn.execute("ALTER TABLE log_files ADD COLUMN dev INTEGER NOT NULL DEFAULT 0")
             conn.close()
 
-            self.assertEqual(migrate(db_path), [10])
+            self.assertEqual(migrate(db_path), [10, 11])
 
             conn = connect(db_path)
             try:
@@ -408,7 +408,7 @@ class DeviceIdentityMigrationTests(unittest.TestCase):
             conn.execute("CREATE TABLE log_files_v10 (id INTEGER PRIMARY KEY, basura TEXT)")
             conn.close()
 
-            self.assertEqual(migrate(db_path), [10])
+            self.assertEqual(migrate(db_path), [10, 11])
 
             conn = connect(db_path)
             try:
@@ -446,7 +446,34 @@ class DeviceIdentityMigrationTests(unittest.TestCase):
             finally:
                 conn.close()
 
-            self.assertEqual(migrate(db_path), [10])
+            self.assertEqual(migrate(db_path), [10, 11])
+
+
+class SearchMigrationTests(unittest.TestCase):
+    """H-23: la FTS5 se crea también en bases que vienen de v10."""
+
+    def test_v10_a_v11_reconstruye_la_fts_con_eventos_antiguos(self):
+        with tempfile.TemporaryDirectory(prefix="ela-migrate-v11-") as tmp:
+            db_path = _v9_db(tmp)
+            self.assertEqual(migrate(db_path), [10, 11])
+            self.assertEqual(migrate(db_path), [], "idempotente")
+
+            conn = connect(db_path)
+            try:
+                found = conn.execute(
+                    "SELECT COUNT(*) FROM events_fts WHERE events_fts MATCH ?",
+                    ('"pre-v10"',),
+                ).fetchone()[0]
+                self.assertEqual(found, 1, "el rebuild debe indexar los eventos preexistentes")
+                triggers = {
+                    row[0]
+                    for row in conn.execute(
+                        "SELECT name FROM sqlite_master WHERE type='trigger' AND name LIKE 'events_fts_%'"
+                    )
+                }
+                self.assertEqual(len(triggers), 3)
+            finally:
+                conn.close()
 
 
 if __name__ == "__main__":

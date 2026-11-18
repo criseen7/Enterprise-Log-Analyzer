@@ -78,10 +78,16 @@ class WhereClauseTests(UiDataTestCase):
         self.assertIn("e.category IS NULL", where)
         self.assertEqual(params, [45])
 
-    def test_busqueda_escapa_los_comodines_de_like(self):
-        where, params = data.EventFilters(search="100%_x").where()
+    def test_busqueda_corta_escapa_los_comodines_de_like(self):
+        """Los términos de menos de 3 caracteres no existen para el trigrama FTS."""
+        where, params = data.EventFilters(search="a%").where()
         self.assertIn("ESCAPE", where)
-        self.assertEqual(params, [45, "%100\\%\\_x%", "%100\\%\\_x%"])
+        self.assertEqual(params, [45, "%a\\%%", "%a\\%%"])
+
+    def test_busqueda_larga_usa_la_fts(self):
+        where, params = data.EventFilters(search="100%_x").where()
+        self.assertIn("events_fts MATCH", where)
+        self.assertEqual(params, [45, '"100%_x"'])
 
     def test_solo_sin_parsear(self):
         where, params = data.EventFilters(unparsed_only=True, min_severity=0).where()
@@ -140,11 +146,18 @@ class FetchEventsTests(UiDataTestCase):
         self.assertEqual([row["message"] for row in rows], ["[runtime] línea suelta"])
 
     def test_la_busqueda_no_se_come_el_porcentaje(self):
-        """El caso que justifica escapar el LIKE: `%` no es comodín para el usuario."""
+        """El caso que justificaba escapar el LIKE sigue funcionando con FTS."""
         self.add(message="uso de disco al 100%")
         self.add(message="esto no coincide")
         rows = data.fetch_events(self.conn, data.EventFilters(search="100%"))
         self.assertEqual([row["message"] for row in rows], ["uso de disco al 100%"])
+
+    def test_la_fts_sigue_al_insertar_y_al_borrar(self):
+        self.add(message="pago rechazado")
+        event_id = self.add(message="token efímero")
+        self.assertEqual(len(data.fetch_events(self.conn, data.EventFilters(search="efímero"))), 1)
+        self.conn.execute("DELETE FROM events WHERE id = ?", (event_id,))
+        self.assertEqual(data.fetch_events(self.conn, data.EventFilters(search="efímero")), [])
 
 
 class CatalogTests(UiDataTestCase):
@@ -194,6 +207,18 @@ class IndexUsageTests(UiDataTestCase):
         )
         self.assertNotIn("SCAN e", plan, f"la consulta escanea la tabla:\n{plan}")
         self.assertIn("USING INDEX idx_events_service_ts", plan, plan)
+
+    def test_la_busqueda_usa_la_fts(self):
+        self.add(message="pago rechazado")
+        plan = "\n".join(data.explain_plan(self.conn, data.EventFilters(search="rechaz")))
+        self.assertNotRegex(plan, r"\bSCAN\s+e\b", f"la consulta escanea eventos:\n{plan}")
+        self.assertIn("events_fts", plan, plan)
+
+    def test_los_filtros_por_defecto_usan_el_indice_de_tiempo(self):
+        self.add(message="algo fue")
+        plan = "\n".join(data.explain_plan(self.conn, data.EventFilters()))
+        self.assertNotRegex(plan, r"\bSCAN\s+e\b", f"la consulta escanea eventos:\n{plan}")
+        self.assertIn("SEARCH e USING INDEX idx_events_ts", plan, plan)
 
 
 if __name__ == "__main__":

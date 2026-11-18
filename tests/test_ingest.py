@@ -81,6 +81,14 @@ class SymlinkTests(IngestBase):
 
 
 class IdempotenciaTest(IngestBase):
+    def test_el_conteo_no_incluye_las_escrituras_de_los_triggers_fts(self):
+        """H-23: `total_changes` contaría también las tablas sombra de FTS5."""
+        self.append(WLS.format(n=1))
+        result = ingest_file(self.conn, self.log, self.registry)
+        self.assertEqual(result.counts.inserted, 1)
+        self.assertEqual(result.counts.skipped, 0)
+        self.assertEqual(count_events(self.conn), 1)
+
     def test_dos_pasadas_no_duplican(self):
         self.append(WLS.format(n=1))
         first = ingest_file(self.conn, self.log, self.registry)

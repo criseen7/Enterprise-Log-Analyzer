@@ -451,9 +451,14 @@ def insert_events(conn: sqlite3.Connection, rows: list[tuple]) -> InsertCounts:
     """
     if not rows:
         return InsertCounts()
-    before = conn.total_changes
-    conn.executemany(_INSERT_EVENTS_SQL, rows)
-    inserted = conn.total_changes - before
+    # `total_changes` incluye lo que hacen los triggers, y el índice FTS escribe
+    # en varias tablas sombra por cada evento: contaría 3 inserciones por fila.
+    # `changes()` informa sólo de la sentencia principal, incluso con
+    # `INSERT OR IGNORE` (0 para la fila descartada, 1 para la insertada).
+    inserted = 0
+    for row in rows:
+        conn.execute(_INSERT_EVENTS_SQL, row)
+        inserted += conn.execute("SELECT changes()").fetchone()[0]
     return InsertCounts(inserted=inserted, skipped=len(rows) - inserted)
 
 
