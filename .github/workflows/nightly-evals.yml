@@ -34,7 +34,7 @@ jobs:
       - name: A1 · no compare_windows
         # Se ejecuta sin umbral: la ablación debe poder fallar sin romper el job.
         run: python -m evals.run --subset full --plan heuristic --ablation A1 --tag nightly-a1
-      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: evals-deterministic
@@ -65,7 +65,7 @@ jobs:
         run: |
           echo "::notice::SKIPPED: ANTHROPIC_API_KEY is not configured."
           echo "The deterministic job above still ran and is the real daily signal."
-      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: evals-model
