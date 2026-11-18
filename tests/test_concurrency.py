@@ -12,7 +12,6 @@ import sqlite3
 import threading
 import time
 import unittest
-from unittest import mock
 
 from app.analysis.backfill import backfill
 from app.db.connection import connect, transaction
@@ -69,14 +68,14 @@ class BackfillBatchTests(BackfillSeedMixin, TempDbTestCase):
     def test_una_transaccion_corta_por_lote(self):
         self._seed_events(5)
         conn = self.connect()
-        with mock.patch("app.analysis.backfill.transaction", wraps=transaction) as spy:
+        with unittest.mock.patch("app.analysis.backfill.transaction", wraps=transaction) as spy:
             self.assertEqual(backfill(conn, batch_size=2), 5)
         self.assertEqual(spy.call_count, 3, "3 lotes => 3 COMMIT, no uno solo")
 
     def test_la_resincronizacion_tiene_su_propia_transaccion(self):
         self._seed_events(3)
         conn = self.connect()
-        with mock.patch("app.analysis.backfill.transaction", wraps=transaction) as spy:
+        with unittest.mock.patch("app.analysis.backfill.transaction", wraps=transaction) as spy:
             backfill(conn, recalc=True, batch_size=2)
         self.assertEqual(spy.call_count, 3, "2 lotes + 1 resincronización")
 
