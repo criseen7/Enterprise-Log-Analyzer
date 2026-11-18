@@ -15,9 +15,12 @@ Dos modos, y la diferencia importa:
   por el que `events.category` se guarda en el momento de la ingesta es que un
   cambio de reglas no debería mover el pasado sin que nadie lo decida.
 
-Se procesa en lotes y en una sola transacción: cada `UPDATE` por su cuenta
-sería una transacción por evento, y 100.000 eventos tardarían minutos y
-dejarían la base a medias si algo fallara a mitad.
+Se procesa en lotes, y **cada lote es una transacción corta**. Cada `UPDATE`
+por su cuenta sería una transacción por evento, pero una sola transacción para
+los 100.000 eventos sería peor todavía: `BEGIN IMMEDIATE` retiene el único
+escritor de SQLite durante toda la pasada y el watcher se queda sin ingerir.
+Con un COMMIT por lote el progreso es durable y el lock se libera entre lotes.
+`--recalc` resincroniza los incidentes en una transacción aparte, al final.
 """
 
 from __future__ import annotations
@@ -127,6 +130,40 @@ def _resync_incidents(conn: sqlite3.Connection, mapping: dict[str, Counter[str]]
         )
 
 
+def _classify_batch(
+    rows: list[sqlite3.Row],
+    rules: ErrorRules,
+    recalc: bool,
+    mapping: dict[str, Counter[str]],
+) -> list[tuple[str, str, int]]:
+    """Clasifica fuera de la transacción: el trabajo de CPU no retiene el lock."""
+    updates: list[tuple[str, str, int]] = []
+    for row in rows:
+        text = row["message"] or row["raw_line"] or ""
+        category = rules.category(text)
+        new_fingerprint = event_fingerprint(category, text)
+        updates.append((category, new_fingerprint, row["id"]))
+        if recalc and row["fingerprint"]:
+            mapping.setdefault(str(row["fingerprint"]), Counter())[new_fingerprint] += 1
+    return updates
+
+
+def _store_batch(conn: sqlite3.Connection, updates: list[tuple[str, str, int]]) -> None:
+    conn.executemany(
+        "UPDATE events SET category = ?, fingerprint = ? WHERE id = ?",
+        updates,
+    )
+
+
+def _run(conn: sqlite3.Connection, work) -> None:
+    """Transacción corta, salvo que el llamador ya tenga una abierta."""
+    if conn.in_transaction:
+        work()
+    else:
+        with transaction(conn):
+            work()
+
+
 def backfill(
     conn: sqlite3.Connection,
     rules: ErrorRules | None = None,
@@ -144,28 +181,19 @@ def backfill(
     last_id = 0
     mapping: dict[str, Counter[str]] = {}
 
-    with transaction(conn):
-        while True:
-            rows = conn.execute(select, (last_id, batch_size)).fetchall()
-            if not rows:
-                break
-            for row in rows:
-                text = row["message"] or row["raw_line"] or ""
-                category = rules.category(text)
-                new_fingerprint = event_fingerprint(category, text)
-                conn.execute(
-                    "UPDATE events SET category = ?, fingerprint = ? WHERE id = ?",
-                    (category, new_fingerprint, row["id"]),
-                )
-                if recalc and row["fingerprint"]:
-                    mapping.setdefault(str(row["fingerprint"]), Counter())[new_fingerprint] += 1
-                updated += 1
-            last_id = rows[-1]["id"]
-            if len(rows) < batch_size:
-                break
+    while True:
+        rows = conn.execute(select, (last_id, batch_size)).fetchall()
+        if not rows:
+            break
+        updates = _classify_batch(rows, rules, recalc, mapping)
+        _run(conn, lambda updates=updates: _store_batch(conn, updates))
+        last_id = rows[-1]["id"]
+        updated += len(rows)
+        if len(rows) < batch_size:
+            break
 
-        if recalc:
-            _resync_incidents(conn, mapping)
+    if recalc:
+        _run(conn, lambda: _resync_incidents(conn, mapping))
 
     return updated
 

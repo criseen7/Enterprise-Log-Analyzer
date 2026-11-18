@@ -750,6 +750,32 @@ class HitlTests(McpTestCase):
         self.assertTrue(result.is_error)
         self.assertIn("CERRADO", result.content[0].text)
 
+    def test_un_token_no_aplica_si_el_estado_cambio_durante_la_aprobacion(self):
+        """H-18: la aprobación tarda minutos; el estado esperado va en el HMAC."""
+        pending = self.payload(
+            "set_incident_status",
+            {"incident_id": self.incident_id, "status": "ACKNOWLEDGED"},
+        )
+        action_id = pending["pending_action"]["action_id"]
+        with self.connect() as conn:
+            action = hitl.approve_action(conn, action_id, approved_by="tester")
+
+        with self.connect() as conn:
+            conn.execute(
+                "UPDATE incidents SET status = 'RESOLVED' WHERE id = ?", (self.incident_id,)
+            )
+
+        result = self.call(
+            "set_incident_status",
+            {
+                "incident_id": self.incident_id,
+                "status": "ACKNOWLEDGED",
+                "confirm_token": action.confirm_token,
+            },
+        )
+        self.assertTrue(result.is_error)
+        self.assertEqual(self._status(self.incident_id), "RESOLVED")
+
 
 class HitlHardeningTests(McpTestCase):
     """Bordes del flujo HITL: deduplicación, idempotencia y atomicidad."""

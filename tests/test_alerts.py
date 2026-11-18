@@ -13,6 +13,7 @@ from app.alerts.incidents import (
     set_incident_status_by_fingerprint,
     status_label,
 )
+from app.db.connection import connect
 from app.reports import export_incidents_csv, export_incidents_html
 from tests.helpers import EnvSandbox
 from tests.test_ui_data import UiDataTestCase
@@ -327,6 +328,50 @@ class IncidentManagementTests(UiDataTestCase):
         self.assertEqual(status_label("ACKNOWLEDGED"), "ACK")
         self.assertEqual(status_label("OPEN"), "OPEN")
         self.assertEqual(status_label("WEIRD"), "WEIRD")
+
+    def test_cas_no_pisa_un_estado_mas_reciente(self):
+        inc_id = self._open_incident()
+        self.assertTrue(set_incident_status(self.conn, inc_id, "RESOLVED"))
+        self.assertFalse(
+            set_incident_status(self.conn, inc_id, "ACKNOWLEDGED", expected_status="OPEN")
+        )
+        self.assertEqual(get_incident(self.conn, inc_id)["status"], "RESOLVED")
+
+    def test_cas_fallido_no_reinicia_el_cooldown(self):
+        inc_id = self._open_incident()
+        set_incident_status(self.conn, inc_id, "RESOLVED")
+        self.assertFalse(
+            set_incident_status(self.conn, inc_id, "OPEN", expected_status="ACKNOWLEDGED")
+        )
+        row = get_incident(self.conn, inc_id)
+        self.assertEqual(row["status"], "RESOLVED")
+        self.assertIsNotNone(row["notified_at"])
+
+    def test_cas_por_huella(self):
+        self._open_incident("fp-cas")
+        self.assertFalse(
+            set_incident_status_by_fingerprint(
+                self.conn, "fp-cas", "ACKNOWLEDGED", expected_status="RESOLVED"
+            )
+        )
+        row = self.conn.execute(
+            "SELECT status FROM incidents WHERE fingerprint = 'fp-cas'"
+        ).fetchone()
+        self.assertEqual(row["status"], "OPEN")
+
+    def test_cas_entre_lectura_y_escritura_de_otra_conexion(self):
+        inc_id = self._open_incident()
+        other = connect(self.db_path)
+        try:
+            # Se lee OPEN, otro proceso escribe RESOLVED, y el ACK con el
+            # estado esperado leído debe perder la carrera.
+            self.assertTrue(set_incident_status(other, inc_id, "RESOLVED"))
+            self.assertFalse(
+                set_incident_status(self.conn, inc_id, "ACKNOWLEDGED", expected_status="OPEN")
+            )
+            self.assertEqual(get_incident(self.conn, inc_id)["status"], "RESOLVED")
+        finally:
+            other.close()
 
 
 if __name__ == "__main__":
