@@ -45,6 +45,7 @@ _deltas: dict[int, Path] = {
     7: MIGRATIONS_DIR / "_007_log_files_head_hash.sql",
     8: MIGRATIONS_DIR / "_008_incident_notified_through.sql",
     9: MIGRATIONS_DIR / "_009_hitl_audit.sql",
+    10: MIGRATIONS_DIR / "_010_log_files_device.sql",
 }
 
 # Versiones que entrega la baseline. Debe ser exactamente los deltas cargados:
@@ -173,6 +174,50 @@ def _delta_009_already_applied(conn) -> bool:
     return True
 
 
+def _unique_columns(conn, table: str) -> list[list[str]]:
+    """Columnas de cada UNIQUE declarado en `table` (no de índices normales)."""
+    result: list[list[str]] = []
+    for idx in conn.execute(f"PRAGMA index_list({table})"):
+        if idx["origin"] != "u":
+            continue
+        result.append(
+            [
+                str(row["name"])
+                for row in conn.execute(f'PRAGMA index_info("{idx["name"]}")')
+                if row["name"] is not None
+            ]
+        )
+    return result
+
+
+def _delta_010_already_applied(conn) -> bool:
+    """Reafirma `_010` si dejó algún efecto, y devuelve si debe saltarse.
+
+    Mirar sólo la columna `dev` dejaría atascada una base a la que se le añadió
+    la columna pero no se reconstruyó la UNIQUE: seguiría identificando archivos
+    por `(inode, generation)` y perdería líneas entre devices. Por eso se vigilan
+    las tres piezas —columna, tabla transitoria y clave— y cualquier estado
+    parcial se recompone ejecutando el **mismo** script del delta, que es
+    idempotente y lleva su propio BEGIN/COMMIT. El estado completo no se toca:
+    reconstruir de nuevo pondría a 0 los `dev` reales que la ingesta ya asignó.
+    """
+    has_dev = _column_exists(conn, "log_files", "dev")
+    has_transient = _table_exists(conn, "log_files_v10")
+    if has_dev and ["dev", "inode", "generation"] in _unique_columns(conn, "log_files"):
+        if not has_transient:
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_log_files_path ON log_files (path)")
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_log_files_active ON log_files (is_active, path)"
+            )
+            return True
+    if not (has_dev or has_transient):
+        return False
+    # executescript() hace un COMMIT implícito antes de correr: la atomicidad la
+    # declara el propio script (BEGIN/COMMIT), igual que en `_002` y `_009`.
+    conn.executescript(_deltas[10].read_text(encoding="utf-8"))
+    return True
+
+
 # Deltas que no son re-ejecutables en SQL puro. El guard detecta si el efecto ya
 # está presente y, de ser así, sólo reafirma su parte idempotente.
 _DELTA_GUARDS: dict[int, Callable[[sqlite3.Connection], bool]] = {
@@ -180,6 +225,7 @@ _DELTA_GUARDS: dict[int, Callable[[sqlite3.Connection], bool]] = {
     7: _delta_007_already_applied,
     8: _delta_008_already_applied,
     9: _delta_009_already_applied,
+    10: _delta_010_already_applied,
 }
 
 

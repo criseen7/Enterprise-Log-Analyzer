@@ -7,9 +7,10 @@ Dos funciones definen la correctitud de la ingesta:
 * `insert_events()` — inserta con `INSERT OR IGNORE` sobre `UNIQUE(file_id, offset)`.
 
 La clave de idempotencia es `(file_id, offset)`, y `file_id` se deriva de
-`(inode, generation)` en vez de la ruta. Ver ADR-003 para el porqué: rotar un
-log cambia la ruta, o la deja igual pero con el contenido truncado, y las dos
-cosas rompen cualquier esquema que use la ruta como identidad.
+`(dev, inode, generation)` en vez de la ruta. Ver ADR-003 para el porqué: rotar
+un log cambia la ruta, o la deja igual pero con el contenido truncado, y las dos
+cosas rompen cualquier esquema que use la ruta como identidad. El dispositivo
+(`st_dev`) entra en la identidad porque el inode sólo es único dentro de él.
 """
 
 from __future__ import annotations
@@ -64,10 +65,13 @@ class FileState:
     offset: int
     generation: int
     reason: str  # new | resumed | truncated | renamed | recycled | copied
-    # Inodo con el que se resolvió la fila. `update_progress` lo usa como
+    # Identidad con la que se resolvió la fila. `update_progress` la usa como
     # guarda: si el archivo cambió de identidad durante la lectura, no se
     # avanza el offset de una fila que ya no describe ese contenido.
     inode: int | None = None
+    # st_dev del descriptor. 0 en llamadores sin device conocido (compatibilidad
+    # con firmas antiguas); la ingesta siempre lo pasa con el valor real.
+    dev: int = 0
 
 
 @dataclass
@@ -83,13 +87,13 @@ class InsertCounts:
 # --- resolución de archivo ---------------------------------------------
 
 
-def _stat(path: Path) -> tuple[int | None, int]:
-    """`(inode, size)`, o `(None, 0)` si el archivo desapareció entre check y read."""
+def _stat(path: Path) -> tuple[int, int | None, int]:
+    """`(dev, inode, size)`; `inode=None` si desapareció entre check y read."""
     try:
         st = os.stat(path)
     except FileNotFoundError:
-        return None, 0
-    return st.st_ino, st.st_size
+        return 0, None, 0
+    return st.st_dev, st.st_ino, st.st_size
 
 
 _HEAD_BYTES = 4096
@@ -136,23 +140,32 @@ def _head_hash(path: Path) -> str | None:
     return _hash_head(head)
 
 
-def _latest_for_inode(conn: sqlite3.Connection, inode: int) -> sqlite3.Row | None:
+def _latest_for_inode(conn: sqlite3.Connection, inode: int | None, dev: int) -> sqlite3.Row | None:
+    """Última generación de `(dev, inode)`.
+
+    `dev = 0` es el centinela de las filas anteriores a v10: encaja con
+    cualquier dispositivo para que la primera ingesta tras la migración no
+    vuelva a crear el archivo desde cero. Si coexisten una fila real y una
+    histórica, gana la real (`ORDER BY (dev = 0)`).
+    """
     return conn.execute(
-        "SELECT * FROM log_files WHERE inode = ? ORDER BY generation DESC LIMIT 1",
-        (inode,),
+        "SELECT * FROM log_files WHERE inode = ? AND (dev = ? OR dev = 0) "
+        "ORDER BY (dev = 0) ASC, generation DESC LIMIT 1",
+        (inode, dev),
     ).fetchone()
 
 
-def _next_generation(conn: sqlite3.Connection, path: str, inode: int | None) -> int:
+def _next_generation(conn: sqlite3.Connection, path: str, inode: int | None, dev: int) -> int:
     """Siguiente número de generación libre.
 
-    Se mira también la ruta, no solo el inode: si un archivo reusa un inode que ya
-    liberó otro, hay que seguir numerando para no chocar con la
-    `UNIQUE (inode, generation)`.
+    Se mira también la ruta, no solo la identidad: si un archivo reusa un inode
+    que ya liberó otro, hay que seguir numerando para no chocar con la
+    `UNIQUE (dev, inode, generation)`.
     """
     rows = conn.execute(
-        "SELECT MAX(generation) AS g FROM log_files WHERE inode = ? OR path = ?",
-        (inode, path),
+        "SELECT MAX(generation) AS g FROM log_files "
+        "WHERE (inode = ? AND (dev = ? OR dev = 0)) OR path = ?",
+        (inode, dev, path),
     ).fetchone()
     return int(rows["g"] or -1) + 1
 
@@ -181,7 +194,7 @@ def _supersede(conn: sqlite3.Connection, path: str, keep_id: int, stamp: str) ->
 
 
 def _copy_source(
-    conn: sqlite3.Connection, path: str, inode: int, head: str | None, size: int
+    conn: sqlite3.Connection, path: str, inode: int, dev: int, head: str | None, size: int
 ) -> sqlite3.Row | None:
     """Fila de origen de una copia hecha por `copytruncate`, si existe.
 
@@ -194,16 +207,16 @@ def _copy_source(
     `last_offset` ya cubra contenido y quepa en la copia (`last_offset <= size`).
     La nueva fila nace con ese offset heredado, de modo que solo se lee lo que
     aún no se había ingerido. Exigir que el nombre sea una rotación del origen
-    (`app.log` -> `app.log.1`) evita que dos logs distintos que casualmente
-    empiezan igual se confundan.
+    (`app.log` -> `app.log.1`) **y el mismo dispositivo** evita que dos logs
+    distintos que casualmente empiezan igual se confundan y hereden offsets.
     """
     if head is None:
         return None
     row = conn.execute(
         "SELECT * FROM log_files WHERE inode IS NOT NULL AND inode <> ? AND path <> ? "
-        "AND head_hash = ? AND last_offset > 0 AND last_offset <= ? "
+        "AND (dev = ? OR dev = 0) AND head_hash = ? AND last_offset > 0 AND last_offset <= ? "
         "ORDER BY last_offset DESC, id DESC LIMIT 1",
-        (inode, path, head, size),
+        (inode, path, dev, head, size),
     ).fetchone()
     if row is None:
         return None
@@ -234,10 +247,10 @@ def resolve_log_file(
 
     | Situación                     | Detección                          | Acción                |
     |-------------------------------|------------------------------------|-----------------------|
-    | Archivo nuevo                 | inode desconocido                  | nueva fila, offset 0  |
+    | Archivo nuevo                 | `(dev, inode)` desconocido         | nueva fila, offset 0  |
     | Copia de `copytruncate`       | inode nuevo + misma cabecera       | offset heredado       |
     | Sigue creciendo               | tamaño ≥ `last_offset`             | continuar en el offset|
-    | Rotado por rename             | inode conocido con otra ruta       | actualizar la ruta    |
+    | Rotado por rename             | identidad conocida con otra ruta   | actualizar la ruta    |
     | Rotado por truncado           | tamaño < `last_offset`             | nueva generación      |
     | Inodo reciclado               | mismo inode, otra cabecera         | nueva generación      |
 
@@ -252,28 +265,39 @@ def resolve_log_file(
     """
     resolved = path.resolve()
     if stat_result is None:
-        inode, size = _stat(resolved)
+        dev, inode, size = _stat(resolved)
         if inode is None:
             return None
     else:
-        inode, size = stat_result.st_ino, stat_result.st_size
+        dev, inode, size = stat_result.st_dev, stat_result.st_ino, stat_result.st_size
 
     head = _head_hash(resolved) if head_hash is _UNSET else cast(str | None, head_hash)
     stamp = now_iso()
-    latest = _latest_for_inode(conn, inode)
+    latest = _latest_for_inode(conn, inode, dev)
 
     if latest is None:
-        copy_source = _copy_source(conn, str(resolved), inode, head, size)
+        copy_source = _copy_source(conn, str(resolved), inode, dev, head, size)
         offset = int(copy_source["last_offset"]) if copy_source is not None else 0
         reason = "copied" if copy_source is not None else "new"
-        generation = _next_generation(conn, str(resolved), inode)
+        generation = _next_generation(conn, str(resolved), inode, dev)
         cursor = conn.execute(
-            "INSERT INTO log_files (path, inode, generation, size, last_offset, last_size, "
-            "head_hash, first_seen, last_seen) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (str(resolved), inode, generation, size, offset, offset, head, stamp, stamp),
+            "INSERT INTO log_files (path, dev, inode, generation, size, last_offset, last_size, "
+            "head_hash, first_seen, last_seen) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                str(resolved),
+                dev,
+                inode,
+                generation,
+                size,
+                offset,
+                offset,
+                head,
+                stamp,
+                stamp,
+            ),
         )
         _supersede(conn, str(resolved), cursor.lastrowid, stamp)
-        return FileState(cursor.lastrowid, offset, generation, reason, inode)
+        return FileState(cursor.lastrowid, offset, generation, reason, inode, dev)
 
     renamed = latest["path"] != str(resolved)
     # Solo se compara cuando ya se ingirió contenido (`last_offset > 0`): un
@@ -295,17 +319,17 @@ def resolve_log_file(
         generation = latest["generation"] + 1
         reason = "recycled" if renamed else "truncated"
         cursor = conn.execute(
-            "INSERT INTO log_files (path, inode, generation, size, last_offset, last_size, "
+            "INSERT INTO log_files (path, dev, inode, generation, size, last_offset, last_size, "
             "head_hash, first_seen, last_seen, rotated_at) "
-            "VALUES (?, ?, ?, ?, 0, 0, ?, ?, ?, ?)",
-            (str(resolved), inode, generation, size, head, stamp, stamp, stamp),
+            "VALUES (?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?)",
+            (str(resolved), dev, inode, generation, size, head, stamp, stamp, stamp),
         )
         conn.execute(
             "UPDATE log_files SET is_active = 0, rotated_at = ? WHERE id = ?",
             (stamp, latest["id"]),
         )
         _supersede(conn, str(resolved), cursor.lastrowid, stamp)
-        return FileState(cursor.lastrowid, 0, generation, reason, inode)
+        return FileState(cursor.lastrowid, 0, generation, reason, inode, dev)
 
     if renamed:
         # `is_active = 1` no es redundante: el orden de descubrimiento importa.
@@ -317,10 +341,13 @@ def resolve_log_file(
             (str(resolved), stamp, latest["id"]),
         )
 
+    # `NULLIF(?, 0)`: las filas de antes de v10 tienen dev=0 y se promocionan al
+    # dispositivo real en cuanto se vuelven a ver. No se escribe un 0 sobre una
+    # fila que ya tenía un device conocido.
     conn.execute(
         "UPDATE log_files SET size = ?, last_size = ?, last_seen = ?, is_active = 1, "
-        "head_hash = COALESCE(?, head_hash) WHERE id = ?",
-        (size, size, stamp, head, latest["id"]),
+        "head_hash = COALESCE(?, head_hash), dev = COALESCE(NULLIF(?, 0), dev) WHERE id = ?",
+        (size, size, stamp, head, dev, latest["id"]),
     )
     # Una fila anterior que ocupaba esta ruta y no es este inode: ya no refleja
     # lo que hay en disco ahora, aunque su nombre sea el mismo.
@@ -331,11 +358,18 @@ def resolve_log_file(
         latest["generation"],
         "renamed" if renamed else "resumed",
         inode,
+        dev,
     )
 
 
 def update_progress(
-    conn: sqlite3.Connection, file_id: int, *, offset: int, size: int, inode: int | None
+    conn: sqlite3.Connection,
+    file_id: int,
+    *,
+    offset: int,
+    size: int,
+    inode: int | None,
+    dev: int | None = None,
 ) -> bool:
     """Guarda hasta dónde se leyó. Se llama tras confirmar la inserción.
 
@@ -344,22 +378,30 @@ def update_progress(
     orden (insertar, luego avanzar el offset) es el que hace segura la recuperación
     de una corrida interrumpida.
 
-    `inode` es el del descriptor desde el que se leyó, no el que hay en la
-    ruta ahora. La condición `inode = ?` es la guarda real: si otra pasada
-    creó una generación nueva (o la fila fue desactivada por una rotación), el
-    UPDATE no toca una fila que ya no describe el contenido leído. Con el
-    lector por descriptor, el inodo del `fstat` y el de la lectura coinciden por
-    construcción; la guarda protege del caso en que otra escritura mueva la
-    fila entre resolver y confirmar.
+    `inode` y `dev` son los del descriptor desde el que se leyó, no los que hay
+    en la ruta ahora. La condición `inode = ?` (y `dev = ?` cuando se pasa) es la
+    guarda real: si otra pasada creó una generación nueva, o la fila fue
+    desactivada por una rotación, el UPDATE no toca una fila que ya no describe
+    el contenido leído. Con el lector por descriptor, la identidad del `fstat` y
+    la de la lectura coinciden por construcción; la guarda protege del caso en
+    que otra escritura mueva la fila entre resolver y confirmar. `dev=0` sigue
+    encajando con las filas históricas de antes de v10.
+
+    `dev=None` mantiene la firma antigua para llamadores que no conocen el
+    dispositivo; la ingesta siempre lo pasa con el valor real.
 
     Devuelve si la fila se actualizó. Un `False` no es un error: es la señal de
     que el llamador leyó un archivo que dejó de ser el mismo.
     """
-    cursor = conn.execute(
+    sql = (
         "UPDATE log_files SET last_offset = ?, last_size = ?, size = ?, last_seen = ? "
-        "WHERE id = ? AND inode = ? AND is_active = 1",
-        (offset, size, size, now_iso(), file_id, inode),
+        "WHERE id = ? AND inode = ? AND is_active = 1"
     )
+    params: list[object] = [offset, size, size, now_iso(), file_id, inode]
+    if dev is not None:
+        sql += " AND (dev = ? OR dev = 0)"
+        params.append(dev)
+    cursor = conn.execute(sql, params)
     return cursor.rowcount == 1
 
 

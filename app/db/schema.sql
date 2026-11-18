@@ -16,14 +16,18 @@ CREATE TABLE IF NOT EXISTS schema_version (
 
 -- Archivos ingeridos y su posición de lectura.
 --
--- La identidad de una fila NO es la ruta: es (inode, generation). Ver ADR-003.
+-- La identidad de una fila NO es la ruta: es (dev, inode, generation). Ver ADR-003.
 -- La ruta cambia cuando el archivo se renombra (logrotate) y el contenido
--- sobrevive; el inode sobrevive al rename. Y una rotación por *truncado*
--- conserva el inode pero cambia el contenido, de ahí la generación.
+-- sobrevive; el inode sobrevive al rename pero sólo dentro de un dispositivo,
+-- de ahí `dev`. Y una rotación por *truncado* conserva el inode pero cambia el
+-- contenido, de ahí la generación.
 CREATE TABLE IF NOT EXISTS log_files (
     id           INTEGER PRIMARY KEY,
     -- Última ruta conocida. Puede no ser la original si el archivo se renombró.
     path         TEXT    NOT NULL,
+    -- st_dev del descriptor. 0 = fila histórica de antes de v10 (compatible con
+    -- cualquier dispositivo; se sustituye por el real al volver a ver el archivo).
+    dev          INTEGER NOT NULL DEFAULT 0,
     inode        INTEGER,
     -- 0 = contenido original; cada rotación o truncado incrementa el contador.
     generation   INTEGER NOT NULL DEFAULT 0,
@@ -36,13 +40,13 @@ CREATE TABLE IF NOT EXISTS log_files (
     first_seen   TEXT    NOT NULL,
     last_seen    TEXT    NOT NULL,
     rotated_at   TEXT,
-    -- SHA-256 truncado de la primera línea completa. `(inode, generation)` no
-    -- basta cuando el SO recicla un inodo: el hash distingue "mismo archivo,
-    -- otra ruta" de "otro archivo con el mismo inodo". NULL en filas históricas
-    -- y mientras la primera línea esté a medias.
+    -- SHA-256 truncado de la primera línea completa. La identidad por dispositivo
+    -- + inodo + generación no basta cuando el SO recicla un inodo: el hash distingue
+    -- "mismo archivo, otra ruta" de "otro archivo con el mismo inodo". NULL en
+    -- filas históricas y mientras la primera línea esté a medias.
     head_hash    TEXT,
     is_active    INTEGER NOT NULL DEFAULT 1,
-    UNIQUE (inode, generation)
+    UNIQUE (dev, inode, generation)
 );
 
 CREATE INDEX IF NOT EXISTS idx_log_files_path    ON log_files (path);

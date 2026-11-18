@@ -716,5 +716,81 @@ class HealthyCliTest(TempDbTestCase):
         self.assertFalse(self.db_path.exists(), "--healthy es de solo lectura")
 
 
+class DeviceIdentityTests(IngestBase):
+    """H-01/H-05: el inode solo no identifica un archivo; hace falta el device."""
+
+    def _fstat_con_device(self, fd: int, *, dev: int, ino: int) -> os.stat_result:
+        st = os.fstat(fd)
+        return os.stat_result(
+            (
+                st.st_mode,
+                ino,
+                dev,
+                st.st_nlink,
+                st.st_uid,
+                st.st_gid,
+                st.st_size,
+                st.st_atime,
+                st.st_mtime,
+                st.st_ctime,
+            )
+        )
+
+    def test_mismo_inodo_en_device_distinto_es_archivo_nuevo(self):
+        primero = self.log_dir / "mount_a.log"
+        segundo = self.log_dir / "mount_b.log"
+        primero.write_text(WLS.format(n=1), encoding="utf-8")
+        segundo.write_text(WLS.format(n=2), encoding="utf-8")
+
+        first = ingest_file(self.conn, primero, self.registry)
+        self.assertEqual(first.reason, "new")
+        ino = os.stat(primero).st_ino
+        dev_a = os.stat(primero).st_dev
+        dev_b = dev_a + 1
+
+        # El mismo número de inodo en otro dispositivo: no es un rename ni un
+        # reciclado, es otro archivo. Sin `dev` se reutilizaba el offset y se
+        # perdía por completo la primera línea del segundo archivo.
+        with mock.patch(
+            "app.ingest.ingestor._fstat_fd",
+            side_effect=lambda fd: self._fstat_con_device(fd, dev=dev_b, ino=ino),
+        ):
+            second = ingest_file(self.conn, segundo, self.registry)
+
+        self.assertEqual(second.reason, "new")
+        self.assertEqual(second.counts.inserted, 1)
+        self.assertEqual(count_events(self.conn), 2)
+        filas = self.conn.execute(
+            "SELECT dev, inode, generation FROM log_files ORDER BY id"
+        ).fetchall()
+        self.assertEqual(
+            [(r["dev"], r["inode"], r["generation"]) for r in filas],
+            [(dev_a, ino, 0), (dev_b, ino, 0)],
+        )
+
+    def test_el_guard_de_progreso_rechaza_un_device_distinto(self):
+        self.append(WLS.format(n=1))
+        state = resolve_log_file(self.conn, self.log)
+        st = os.stat(self.log)
+
+        self.assertTrue(
+            update_progress(
+                self.conn, state.file_id, offset=10, size=10, inode=st.st_ino, dev=st.st_dev
+            )
+        )
+        self.assertFalse(
+            update_progress(
+                self.conn,
+                state.file_id,
+                offset=20,
+                size=20,
+                inode=st.st_ino,
+                dev=st.st_dev + 1,
+            ),
+            "un device distinto no debe avanzar el offset",
+        )
+        self.assertEqual(last_offset(self.conn, state.file_id), 10)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

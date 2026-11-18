@@ -17,8 +17,9 @@ from unittest import mock
 
 from app.db import migrations
 from app.db.connection import connect
-from app.db.migrations import migrate, status
+from app.db.migrations import _BASELINE_VERSION, _record, migrate, status
 from app.db.schema import SCHEMA_VERSION
+from tests.helpers import FIXTURES_DIR
 
 
 class MigrationLockTests(unittest.TestCase):
@@ -301,6 +302,151 @@ class HitlAuditMigrationTests(unittest.TestCase):
 
             # Con el script real la migración termina: la base no quedó atascada.
             self.assertIn(9, migrate(db_path))
+
+
+def _v9_db(tmp: str):
+    """Base v9 real (v1 + deltas 2…9) con un archivo y un evento de datos."""
+    db_path = Path(tmp) / "app.db"
+    conn = connect(db_path)
+    conn.executescript((FIXTURES_DIR / "schema_v1.sql").read_text(encoding="utf-8"))
+    _record(conn, _BASELINE_VERSION)
+    conn.execute(
+        "INSERT INTO log_files (id, path, inode, first_seen, last_seen) "
+        "VALUES (1, 'logs/a.log', 77, '2026-10-05T10:00:00Z', '2026-10-05T10:00:00Z')"
+    )
+    conn.execute("INSERT INTO events (file_id, offset, raw_line) VALUES (1, 0, 'pre-v10')")
+    conn.close()
+    migrate(db_path, target=9)
+    return db_path
+
+
+def _unique_columns(conn, table: str) -> list[tuple[str, ...]]:
+    """Columnas de cada UNIQUE declarado, para comprobar la identidad."""
+    result: list[tuple[str, ...]] = []
+    for idx in conn.execute(f"PRAGMA index_list({table})"):
+        if idx["origin"] != "u":
+            continue
+        result.append(
+            tuple(
+                row["name"]
+                for row in conn.execute(f'PRAGMA index_info("{idx["name"]}")')
+                if row["name"] is not None
+            )
+        )
+    return result
+
+
+class DeviceIdentityMigrationTests(unittest.TestCase):
+    """H-01/H-08/H-10: v10 añade `dev` a la identidad de forma atómica."""
+
+    def test_v9_a_v10_anyade_dev_y_amplia_la_clave(self):
+        with tempfile.TemporaryDirectory(prefix="ela-migrate-v10-") as tmp:
+            db_path = _v9_db(tmp)
+            self.assertEqual(migrate(db_path), [10])
+            self.assertEqual(migrate(db_path), [], "idempotente")
+            self.assertEqual(status(db_path), (SCHEMA_VERSION, SCHEMA_VERSION))
+
+            conn = connect(db_path)
+            try:
+                columns = {
+                    str(row["name"])
+                    for row in conn.execute("SELECT name FROM pragma_table_info('log_files')")
+                }
+                self.assertIn("dev", columns)
+                self.assertTrue(
+                    migrations._column_exists(conn, "log_files", "head_hash"),
+                    "el rebuild no debe perder columnas de deltas anteriores",
+                )
+                self.assertIn(("dev", "inode", "generation"), _unique_columns(conn, "log_files"))
+                self.assertEqual(
+                    conn.execute("SELECT dev FROM log_files WHERE id = 1").fetchone()[0],
+                    0,
+                    "las filas históricas llevan el centinela 0, no NULL (NULL no colisiona en UNIQUE)",
+                )
+                self.assertEqual(
+                    conn.execute(
+                        "SELECT COUNT(*) FROM events WHERE raw_line = 'pre-v10'"
+                    ).fetchone()[0],
+                    1,
+                    "los eventos sobreviven al rebuild",
+                )
+                self.assertEqual(
+                    conn.execute(
+                        "SELECT COUNT(*) FROM sqlite_master WHERE name='log_files_v10'"
+                    ).fetchone()[0],
+                    0,
+                    "no queda la tabla transitoria",
+                )
+            finally:
+                conn.close()
+
+    def test_v10_con_columna_dev_pero_clave_vieja_se_recompone(self):
+        """Guard atómico: detectar sólo la columna dejaría la clave `(inode, generation)`."""
+        with tempfile.TemporaryDirectory(prefix="ela-migrate-v10-parcial-") as tmp:
+            db_path = _v9_db(tmp)
+            conn = connect(db_path)
+            conn.execute("ALTER TABLE log_files ADD COLUMN dev INTEGER NOT NULL DEFAULT 0")
+            conn.close()
+
+            self.assertEqual(migrate(db_path), [10])
+
+            conn = connect(db_path)
+            try:
+                self.assertIn(("dev", "inode", "generation"), _unique_columns(conn, "log_files"))
+                self.assertEqual(
+                    [r[1] for r in conn.execute("PRAGMA table_info(log_files)")][:4],
+                    ["id", "path", "dev", "inode"],
+                    "el rebuild reordena a la baseline, no deja dev al final",
+                )
+            finally:
+                conn.close()
+
+    def test_v10_con_tabla_transitoria_huerfana_se_recupera(self):
+        with tempfile.TemporaryDirectory(prefix="ela-migrate-v10-transitoria-") as tmp:
+            db_path = _v9_db(tmp)
+            conn = connect(db_path)
+            conn.execute("CREATE TABLE log_files_v10 (id INTEGER PRIMARY KEY, basura TEXT)")
+            conn.close()
+
+            self.assertEqual(migrate(db_path), [10])
+
+            conn = connect(db_path)
+            try:
+                self.assertFalse(migrations._table_exists(conn, "log_files_v10"))
+                self.assertIn(("dev", "inode", "generation"), _unique_columns(conn, "log_files"))
+                self.assertEqual(conn.execute("SELECT COUNT(*) FROM log_files").fetchone()[0], 1)
+            finally:
+                conn.close()
+
+    def test_v10_fallo_antes_del_commit_no_deja_ddl_a_medias(self):
+        """H-08: el rebuild entero se revierte y el reintento con el SQL real funciona."""
+        with tempfile.TemporaryDirectory(prefix="ela-migrate-v10-atomic-") as tmp:
+            db_path = _v9_db(tmp)
+
+            sql = migrations._deltas[10].read_text(encoding="utf-8")
+            roto = Path(tmp) / "_010_roto.sql"
+            roto.write_text(
+                sql.replace(
+                    "\nCOMMIT;",
+                    "\nINSERT INTO tabla_inexistente (x) VALUES (1);\nCOMMIT;",
+                ),
+                encoding="utf-8",
+            )
+
+            with mock.patch.dict(migrations._deltas, {10: roto}):
+                with self.assertRaises(sqlite3.Error):
+                    migrate(db_path)
+
+            conn = connect(db_path)
+            try:
+                self.assertFalse(migrations._column_exists(conn, "log_files", "dev"))
+                self.assertFalse(migrations._table_exists(conn, "log_files_v10"))
+                self.assertNotIn(("dev", "inode", "generation"), _unique_columns(conn, "log_files"))
+                self.assertEqual(migrations.applied_versions(conn)[-1], 9)
+            finally:
+                conn.close()
+
+            self.assertEqual(migrate(db_path), [10])
 
 
 if __name__ == "__main__":

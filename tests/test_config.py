@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -14,6 +15,7 @@ from app.config import (
     UIConfig,
     load_settings,
 )
+from app.db.connection import connect
 from app.db.migrations import applied_versions, migrate, status
 from app.db.schema import SCHEMA_VERSION
 from tests.helpers import FIXTURES_DIR, EnvSandbox, TempDbTestCase
@@ -349,6 +351,69 @@ class MigrationTests(TempDbTestCase):
             1,
             "el guard debe reafirmar el índice de _003",
         )
+
+    def test_baseline_vs_migrada_columna_por_columna(self):
+        """H-09: una base nueva y una migrada desde v1 deben tener el MISMO esquema.
+
+        Se comparan las columnas por nombre con todos sus atributos (tipo,
+        nulabilidad, default, PK) y los índices con sus columnas. Comparar por
+        posición no aporta nada en SQLite —todo acceso es por nombre— y obligaría
+        a reconstruir `events` (millones de filas) sólo por mover `category`.
+        `log_files` sí se compara además por orden: v10 lo reconstruye.
+        """
+        with tempfile.TemporaryDirectory(prefix="ela-paridad-") as tmp:
+            fresh = Path(tmp) / "fresh.db"
+            old = Path(tmp) / "old.db"
+
+            migrate(fresh)
+
+            conn = connect(old)
+            conn.executescript((FIXTURES_DIR / "schema_v1.sql").read_text(encoding="utf-8"))
+            conn.execute(
+                "INSERT INTO schema_version (version, applied_at) "
+                "VALUES (1, '2026-01-01T00:00:00.000Z')"
+            )
+            conn.close()
+            migrate(old)
+
+            def snapshot(path):
+                c = connect(path)
+                try:
+                    schema = {}
+                    names = [
+                        r[0]
+                        for r in c.execute(
+                            "SELECT name FROM sqlite_master "
+                            "WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
+                        )
+                    ]
+                    for table in names:
+                        columns = sorted(
+                            (r["name"], r["type"], r["notnull"], r["dflt_value"], r["pk"])
+                            for r in c.execute(f"PRAGMA table_info({table})")
+                        )
+                        indexes = {}
+                        for idx in c.execute(f"PRAGMA index_list({table})"):
+                            cols = tuple(
+                                r["name"]
+                                for r in c.execute(f'PRAGMA index_info("{idx["name"]}")')
+                                if r["name"] is not None
+                            )
+                            indexes[idx["name"]] = (idx["unique"], cols)
+                        schema[table] = (columns, indexes)
+                    return schema, [tuple(r[1] for r in c.execute("PRAGMA table_info(log_files)"))]
+                finally:
+                    c.close()
+
+            esperado, orden_esperado = snapshot(fresh)
+            obtenido, orden_obtenido = snapshot(old)
+            self.assertEqual(obtenido, esperado, "esquema divergente entre baseline y migrada")
+            self.assertEqual(
+                orden_obtenido,
+                orden_esperado,
+                "v10 debe reconstruir log_files en el orden exacto de la baseline",
+            )
+            self.assertEqual(orden_esperado[0][:4], ("id", "path", "dev", "inode"))
 
     def test_refuses_newer_database(self):
         migrate(self.db_path)
