@@ -1,4 +1,7 @@
 -- v9 — auditoría append-only de HITL y separación del rechazo.
+-- DDL y backfill van en una sola transacción: un fallo a mitad de script no
+-- deja columnas huérfanas que el guard tendría que reconstruir a ciegas.
+BEGIN;
 ALTER TABLE agent_actions ADD COLUMN rejected_at TEXT;
 ALTER TABLE agent_actions ADD COLUMN rejected_by TEXT;
 
@@ -63,3 +66,5 @@ SELECT id, 'EXECUTED', NULL, executed_at, tool
    AND NOT EXISTS (
     SELECT 1 FROM hitl_audit h WHERE h.action_id = agent_actions.id AND h.event = 'EXECUTED'
  );
+
+COMMIT;

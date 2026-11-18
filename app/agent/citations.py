@@ -38,9 +38,12 @@ from app.agent.contracts import (
     EvidenceBundle,
     EvidenceItem,
 )
+from app.trust import clean_untrusted
 
 # Umbral de fallo de hechos a partir del cual merece la pena re-sintetizar.
 RETRY_THRESHOLD = 0.30
+# El feedback vuelve al prompt: una claim larga no puede desplazar a la evidencia.
+MAX_FEEDBACK_CLAIM_CHARS = 400
 
 # Las cifras de una claim tienen que existir en la evidencia citada. Es una
 # comprobación de soporte numérico, no de significado: no puede demostrar que
@@ -195,14 +198,18 @@ def apply(diagnosis: Diagnosis, report: CitationReport) -> Diagnosis:
 def feedback_prompt(report: CitationReport) -> str:
     """Texto para el reintento: los ids concretos que fallan, no un reproche."""
     lines = ["El diagnóstico anterior no está sustentado por la evidencia. Corrige o elimina:"]
+
+    def text(claim: Claim) -> str:
+        return clean_untrusted(claim.text, MAX_FEEDBACK_CLAIM_CHARS)
+
     for claim in report.invalid:
-        lines.append(f"- «{claim.text}» cita {', '.join(claim.evidence_ids)}")
+        lines.append(f"- «{text(claim)}» cita {', '.join(claim.evidence_ids)}")
     for claim in report.unsupported:
-        lines.append(f"- «{claim.text}» cita evidencia real, pero sus cifras no aparecen en ella")
+        lines.append(f"- «{text(claim)}» cita evidencia real, pero sus cifras no aparecen en ella")
     for claim in report.uncited:
         if claim.kind == "fact":
             lines.append(
-                f"- «{claim.text}» no cita nada; si es un hecho, cita o conviértelo en hipótesis"
+                f"- «{text(claim)}» no cita nada; si es un hecho, cita o conviértelo en hipótesis"
             )
     lines.append("Usa sólo ids que aparezcan en la evidencia entregada.")
     return "\n".join(lines)

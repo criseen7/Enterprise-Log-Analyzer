@@ -247,7 +247,12 @@ def _set_status(
     if row is None:
         raise ToolError(f"no existe el incidente {incident_id}")
 
-    params = {"incident_id": incident_id, "status": status}
+    # El estado esperado viaja dentro de `params`, que es lo que firma el HMAC.
+    # La aprobación humana puede tardar minutos: si otro actor mueve el
+    # incidente mientras tanto, el token deja de verificar y hay que reaprobar
+    # contra el estado nuevo. Es CAS de extremo a extremo, no sólo del UPDATE.
+    expected = str(row["status"])
+    params = {"incident_id": incident_id, "status": status, "expected_status": expected}
 
     if confirm_token is None:
         with transaction(conn):
@@ -293,7 +298,7 @@ def _set_status(
                 "ser de otra acción o no existir."
             )
 
-        changed = engine_set_incident_status(conn, incident_id, status)
+        changed = engine_set_incident_status(conn, incident_id, status, expected_status=expected)
         if not changed:
             raise ToolError(f"no se pudo cambiar el estado del incidente {incident_id}")
         hitl.mark_executed(conn, approved.id, result=f"incident {incident_id} -> {status}")

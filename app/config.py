@@ -116,13 +116,21 @@ class Settings:
 
     @property
     def log_files(self) -> list[Path]:
-        """Archivos de log que el ingestor debe considerar, ordenados."""
+        """Archivos de log que el ingestor debe considerar, ordenados.
+
+        Los symlinks se descartan antes de resolver: `resolve()` los seguiría y
+        un enlace en `logs/` acabaría apuntando a un fichero arbitrario del host.
+        """
         if not self.paths.log_dir.is_dir():
             return []
         seen: dict[Path, None] = {}
         for pattern in self.ingest.include_patterns:
             seen.update(
-                {p.resolve(): None for p in self.paths.log_dir.glob(pattern) if p.is_file()}
+                {
+                    p.resolve(): None
+                    for p in self.paths.log_dir.glob(pattern)
+                    if p.is_file() and not p.is_symlink()
+                }
             )
         return sorted(seen)
 

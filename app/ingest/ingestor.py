@@ -47,6 +47,7 @@ from app.db.repository import (
 )
 from app.ingest.reader import RawEntry, iter_entry_batches
 from app.parser.registry import Registry
+from app.securefs import open_read_no_follow
 
 
 @dataclass
@@ -115,6 +116,7 @@ def _commit_batch(
     offset: int,
     size: int,
     inode: int,
+    dev: int,
 ) -> InsertCounts:
     """Inserta un lote y avanza el offset en la misma transacción corta.
 
@@ -126,12 +128,12 @@ def _commit_batch(
     """
     if conn.in_transaction:
         counts = insert_events(conn, rows)
-        update_progress(conn, file_id, offset=offset, size=size, inode=inode)
+        update_progress(conn, file_id, offset=offset, size=size, inode=inode, dev=dev)
         return counts
 
     with transaction(conn):
         counts = insert_events(conn, rows)
-        update_progress(conn, file_id, offset=offset, size=size, inode=inode)
+        update_progress(conn, file_id, offset=offset, size=size, inode=inode, dev=dev)
     return counts
 
 
@@ -150,11 +152,14 @@ def ingest_file(
     clasificación convivirían en la misma base.
     """
     rules = rules or ErrorRules.default()
-    resolved = path.resolve()
+    # O_NOFOLLOW: un symlink en `logs/` apuntaría a cualquier fichero legible
+    # del host y su contenido acabaría como evento consultable vía MCP.
     try:
-        fd = os.open(resolved, os.O_RDONLY)
+        fd = open_read_no_follow(path)
     except (FileNotFoundError, NotADirectoryError):
         return FileResult(path, "vanished", "no existe en disco")
+    except ValueError as exc:
+        return FileResult(path, "error", str(exc))
 
     entries = 0
     counts = InsertCounts()
@@ -186,6 +191,7 @@ def ingest_file(
                     offset=batch_end,
                     size=max(stat_result.st_size, batch_end),
                     inode=stat_result.st_ino,
+                    dev=stat_result.st_dev,
                 )
                 entries += len(batch)
                 counts.inserted += batch_counts.inserted

@@ -15,12 +15,12 @@ traza, gate— no sabe cuál se usó. Solamente lo dice la traza.
 from __future__ import annotations
 
 import json
-import re
 from typing import Any
 
 from app.agent.contracts import Claim, Diagnosis, EvidenceBundle, EvidenceItem
 from app.agent.llm import LLMClient, LLMResponse
 from app.agent.promptfiles import load_rendered
+from app.trust import clean_untrusted, untrusted_block
 
 DEFAULT_MODEL = "claude-sonnet-4-5"
 
@@ -35,16 +35,9 @@ MAX_CONTEXT_CHARS = 24_000
 EVIDENCE_OPEN = '<evidence trust="untrusted-log-data">'
 EVIDENCE_CLOSE = "</evidence>"
 
-_CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
-_EVIDENCE_TAG = re.compile(r"<\s*/?\s*evidence", re.IGNORECASE)
-
 
 def _clean(text: str, limit: int) -> str:
-    cleaned = _CONTROL.sub("", text)
-    cleaned = _EVIDENCE_TAG.sub("&lt;evidence", cleaned)
-    if len(cleaned) > limit:
-        return f"{cleaned[:limit]}…[truncado {len(cleaned) - limit} caracteres]"
-    return cleaned
+    return clean_untrusted(text, limit)
 
 
 def _sanitize(value: Any, depth: int = 0) -> Any:
@@ -238,7 +231,11 @@ def synthesize_llm(
         evidence=evidence_context(bundle),
     )
     if feedback:
-        prompt += f"\n\nCorrige esto y vuelve a emitir el diagnóstico:\n{feedback}\n"
+        prompt += "\n\nCorrige esto y vuelve a emitir el diagnóstico:\n"
+        prompt += untrusted_block(
+            "feedback", "untrusted-llm-derived", feedback, limit=MAX_CONTEXT_CHARS
+        )
+        prompt += "\n"
 
     response = llm.complete(
         [{"role": "user", "content": prompt}],

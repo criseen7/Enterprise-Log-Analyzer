@@ -15,6 +15,16 @@ services:
     image: loglens:local
     command: ["python", "-m", "app.ingest", "--watch"]
     restart: unless-stopped
+    # Defensa en profundidad: la imagen ya corre como uid 10001, pero un fallo
+    # en el código no debería poder ganar privilegios ni escribir fuera de los
+    # volúmenes. /tmp se deja writable para los temporales de Python/SQLite.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
     environment:
       ELA_PROJECT_ROOT: /app
       ELA_LOG_DIR: /logs
@@ -27,9 +37,10 @@ services:
       - ela-exports:/exports
       - loglens-traces:/traces
     healthcheck:
-      # `--status` migra y luego lee: devuelve 0 en cuanto el esquema existe,
-      # así que marca "listo" justo después de crear/verificar la base.
-      test: ["CMD", "python", "-m", "app.ingest", "--status"]
+      # `--healthy` es de sólo lectura pero devuelve 1 mientras el esquema no
+      # esté en la versión objetivo. Con `--status` el servicio se marcaba
+      # "sano" antes de migrar y el dashboard arrancaba contra una base vacía.
+      test: ["CMD", "python", "-m", "app.ingest", "--healthy"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -40,6 +51,13 @@ services:
     image: loglens:local
     command: ["streamlit", "run", "app/ui/app.py"]
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
     depends_on:
       analyzer:
         # Esperar a que `analyzer` esté sano evita que dos procesos apliquen la
@@ -81,6 +99,13 @@ services:
     image: loglens:local
     command: ["python", "-m", "app.mcp", "mcp", "--http", "--host", "0.0.0.0", "--port", "8000"]
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
     depends_on:
       analyzer:
         condition: service_healthy
@@ -92,6 +117,12 @@ services:
       ELA_DB_PATH: /data/app.db
       ELA_EXPORT_DIR: /exports
       LOGLENS_TRACES_DIR: /traces
+      # El servidor y la CLI de aprobación corren en este mismo contenedor, así
+      # que comparten clave. Vacío es falsy en `load_secret`: se usa el fichero
+      # 0600 del volumen /data, que sobrevive a reinicios. Definir la variable
+      # en el entorno del anfitrión permite rotarla sin tocar el volumen.
+      LOGLENS_HITL_SECRET: ${LOGLENS_HITL_SECRET:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
     volumes:
       - ./logs:/logs:ro
       - ela-data:/data

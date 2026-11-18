@@ -16,14 +16,18 @@ CREATE TABLE IF NOT EXISTS schema_version (
 
 -- Archivos ingeridos y su posición de lectura.
 --
--- La identidad de una fila NO es la ruta: es (inode, generation). Ver ADR-003.
+-- La identidad de una fila NO es la ruta: es (dev, inode, generation). Ver ADR-003.
 -- La ruta cambia cuando el archivo se renombra (logrotate) y el contenido
--- sobrevive; el inode sobrevive al rename. Y una rotación por *truncado*
--- conserva el inode pero cambia el contenido, de ahí la generación.
+-- sobrevive; el inode sobrevive al rename pero sólo dentro de un dispositivo,
+-- de ahí `dev`. Y una rotación por *truncado* conserva el inode pero cambia el
+-- contenido, de ahí la generación.
 CREATE TABLE IF NOT EXISTS log_files (
     id           INTEGER PRIMARY KEY,
     -- Última ruta conocida. Puede no ser la original si el archivo se renombró.
     path         TEXT    NOT NULL,
+    -- st_dev del descriptor. 0 = fila histórica de antes de v10 (compatible con
+    -- cualquier dispositivo; se sustituye por el real al volver a ver el archivo).
+    dev          INTEGER NOT NULL DEFAULT 0,
     inode        INTEGER,
     -- 0 = contenido original; cada rotación o truncado incrementa el contador.
     generation   INTEGER NOT NULL DEFAULT 0,
@@ -36,13 +40,13 @@ CREATE TABLE IF NOT EXISTS log_files (
     first_seen   TEXT    NOT NULL,
     last_seen    TEXT    NOT NULL,
     rotated_at   TEXT,
-    -- SHA-256 truncado de la primera línea completa. `(inode, generation)` no
-    -- basta cuando el SO recicla un inodo: el hash distingue "mismo archivo,
-    -- otra ruta" de "otro archivo con el mismo inodo". NULL en filas históricas
-    -- y mientras la primera línea esté a medias.
+    -- SHA-256 truncado de la primera línea completa. La identidad por dispositivo
+    -- + inodo + generación no basta cuando el SO recicla un inodo: el hash distingue
+    -- "mismo archivo, otra ruta" de "otro archivo con el mismo inodo". NULL en
+    -- filas históricas y mientras la primera línea esté a medias.
     head_hash    TEXT,
     is_active    INTEGER NOT NULL DEFAULT 1,
-    UNIQUE (inode, generation)
+    UNIQUE (dev, inode, generation)
 );
 
 CREATE INDEX IF NOT EXISTS idx_log_files_path    ON log_files (path);
@@ -85,6 +89,29 @@ CREATE INDEX IF NOT EXISTS idx_events_service_ts  ON events (service, timestamp_
 CREATE INDEX IF NOT EXISTS idx_events_parsed      ON events (parsed_ok, parse_error);
 CREATE INDEX IF NOT EXISTS idx_events_cat_ts      ON events (category, timestamp_utc);
 -- El índice de UNIQUE(file_id, offset) lo crea SQLite automáticamente.
+
+-- Búsqueda de texto: `LIKE '%…%'` no puede usar un índice B-tree. La tabla FTS
+-- externa comparte el rowid de `events` y los triggers mantienen el índice al
+-- día; `trigram` permite buscar substring, no sólo prefijos de palabra.
+CREATE VIRTUAL TABLE IF NOT EXISTS events_fts USING fts5(
+    message, raw_line,
+    content='events', content_rowid='id',
+    tokenize='trigram'
+);
+CREATE TRIGGER IF NOT EXISTS events_fts_ai AFTER INSERT ON events BEGIN
+    INSERT INTO events_fts(rowid, message, raw_line)
+    VALUES (new.id, new.message, new.raw_line);
+END;
+CREATE TRIGGER IF NOT EXISTS events_fts_ad AFTER DELETE ON events BEGIN
+    INSERT INTO events_fts(events_fts, rowid, message, raw_line)
+    VALUES ('delete', old.id, old.message, old.raw_line);
+END;
+CREATE TRIGGER IF NOT EXISTS events_fts_au AFTER UPDATE ON events BEGIN
+    INSERT INTO events_fts(events_fts, rowid, message, raw_line)
+    VALUES ('delete', old.id, old.message, old.raw_line);
+    INSERT INTO events_fts(rowid, message, raw_line)
+    VALUES (new.id, new.message, new.raw_line);
+END;
 
 -- Incidentes: un registro por fingerprint problemático, no por evento.
 CREATE TABLE IF NOT EXISTS incidents (

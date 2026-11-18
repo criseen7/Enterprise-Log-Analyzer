@@ -151,10 +151,21 @@ class TraceResourceTests(McpTestCase):
 
         return asyncio.run(_run())
 
-    def test_una_traza_existente_se_publica_tal_cual(self):
+    def test_una_traza_existente_se_publica_en_bloque_untrusted(self):
         content = '{"kind": "run.start"}\n{"kind": "run.end"}\n'
         (self.traces / "run-abc.jsonl").write_text(content, encoding="utf-8")
-        self.assertEqual(self._read("loglens://trace/run-abc"), content)
+        result = self._read("loglens://trace/run-abc")
+        self.assertTrue(result.startswith('<trace trust="untrusted-agent-output">'))
+        self.assertTrue(result.endswith("</trace>"))
+        self.assertIn('{"kind": "run.start"}', result)
+        self.assertIn('{"kind": "run.end"}', result)
+
+    def test_la_traza_servida_redacta_secretos_por_valor(self):
+        content = '{"kind": "run.end", "root_cause": "Bearer sk-EJEMPLO"}\n'
+        (self.traces / "run-redact.jsonl").write_text(content, encoding="utf-8")
+        result = self._read("loglens://trace/run-redact")
+        self.assertNotIn("sk-EJEMPLO", result)
+        self.assertIn("[REDACTED]", result)
 
     def test_una_traza_inexistente_es_un_error(self):
         with self.assertRaises(Exception) as ctx:
@@ -167,6 +178,29 @@ class TraceResourceTests(McpTestCase):
         with self.assertRaises(Exception) as ctx:
             trace_resource("../../etc/passwd")
         self.assertIn("inválido", str(ctx.exception))
+
+    def test_no_sigue_un_symlink_hacia_el_secreto(self):
+        from app.mcp.resources import trace_resource
+
+        secret = self.root / "app.db.hitl_secret"
+        secret.write_text("secreto-que-no-debe-filtrarse", encoding="utf-8")
+        link = self.traces / "run-link.jsonl"
+        try:
+            os.symlink(secret, link)
+        except (OSError, NotImplementedError):
+            self.skipTest("el sistema no admite symlinks")
+
+        with self.assertRaises(Exception) as ctx:
+            trace_resource("run-link")
+        self.assertNotIn("secreto-que-no-debe-filtrarse", str(ctx.exception))
+
+    def test_run_id_punto_o_punto_padre_es_invalido(self):
+        from app.mcp.resources import trace_resource
+
+        for run_id in (".", ".."):
+            with self.assertRaises(Exception) as ctx:
+                trace_resource(run_id)
+            self.assertIn("inválido", str(ctx.exception))
 
     def test_un_run_id_codificado_no_alcanza_el_disco(self):
         with self.assertRaises(Exception) as ctx:

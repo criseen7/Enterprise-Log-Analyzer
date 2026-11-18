@@ -52,9 +52,9 @@ El README original omite la capa de ingesta y no considera rotación ni concurre
               └──────────────────────┘
 ```
 
-**Servicios separados en Docker (Fase 6):** `analyzer` (watcher, único escritor) y
-`dashboard` (Streamlit, solo lectura). Esto elimina la contención SQLite por diseño,
-no por tuning.
+**Servicios separados en Docker (Fase 6):** `analyzer` (watcher, único escritor),
+`dashboard` (Streamlit, solo lectura) y `mcp` (frontera para agentes). Esto elimina
+la contención SQLite por diseño, no por tuning.
 
 ---
 
@@ -381,19 +381,27 @@ export **CSV** y **HTML** autocontenido · estados OPEN/ACK/RESOLVED
 
 `Dockerfile` multi-stage (`python:3.14-slim` pinneado) · usuario no-root (uid 10001)
 · `.dockerignore` · `docker-compose.yml` con servicios `analyzer` (watcher, único
-escritor) y `dashboard` separados · **volúmenes** `logs:ro`, `ela-data`,
-`ela-exports` · healthchecks (base de datos en `analyzer`, `/_stcore/health` en
-`dashboard`) · `dashboard` arranca sólo cuando `analyzer` está sano, para serializar
-la migración inicial.
+escritor), `dashboard` y `mcp` separados · **volúmenes** `logs:ro`, `ela-data`,
+`ela-exports`, `loglens-traces` · healthchecks (`--healthy` en `analyzer`, `/_stcore/health` en
+`dashboard`, socket en `mcp`) · `dashboard` y `mcp` arrancan sólo cuando `analyzer`
+está sano, para serializar la migración inicial. `--healthy` es de sólo lectura
+pero falla mientras el esquema no esté en la versión objetivo; `--status`, que se
+usaba antes, devolvía 0 incluso con la base sin migrar.
 
 **Aceptación:**
 - [x] Multi-stage, imagen base pinneada y usuario no-root
 - [x] `.dockerignore` excluye `.git`, `.venv`, datos, logs, tests y docs
-- [x] Servicios separados con volúmenes `logs:ro` / `data` / `exports`
-- [x] Healthchecks en ambos servicios
-- [ ] `docker compose up` desde repo limpio · `data/app.db` sobrevive a `down` + `build`
-      — *pendiente de ejecutar donde haya Docker: el entorno de desarrollo no tenía
-      integración WSL 2. Verificar con `make docker-up`.*
+- [x] Servicios separados (`analyzer`, `dashboard`, `mcp`) con volúmenes `logs:ro` / `data` / `exports` / `traces`
+- [x] Healthchecks en los tres servicios; el de `analyzer` exige esquema al día
+- [x] Hardening: usuario no-root, `no-new-privileges`, `cap_drop: ALL`, rootfs de
+      sólo lectura con `/tmp` en tmpfs, secretos HITL/agente inyectados sólo en `mcp`
+- [x] CI: job `compose` con `up -d --wait` → `down` → `up -d --wait` y `--healthy`
+      después de recrear los contenedores (la DB sobrevive porque `down` conserva
+      los named volumes)
+- [ ] `docker compose up` desde repo limpio en local · `data/app.db` sobrevive a
+      `down` + `build` — *pendiente de ejecutar donde haya Docker: el entorno de
+      desarrollo no tenía integración WSL 2. El job de CI cubre la misma ruta;
+      verificar en local con `make docker-up`.*
 
 Los volúmenes `ela-data` / `ela-exports` son **named volumes**: `docker compose down`
 no los borra (sólo `down -v`), por eso la base sobrevive a un rebuild.
@@ -451,7 +459,7 @@ pérdida de datos.
 - [x] B3: `_utcnow_iso` ausente de `detection.py`
 - [x] B4: tests del watcher cubren patrón con directorio, symlink y exclusión del CWD
 - [x] B5: `to_utc_iso` con naive produce UTC, no hora local
-- [x] Suite 207 verde · golden al día · working tree sólo con los archivos previstos (LF)
+- [x] Suite 518 verde · golden al día · working tree sólo con los archivos previstos (LF)
 
 ---
 

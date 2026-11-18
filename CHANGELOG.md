@@ -17,6 +17,14 @@ All notable changes to LogLens are documented here. The format follows
   overwrites who approved the action (schema v9).
 - GitHub Actions pinned to Node 24 releases and runners fixed to `ubuntu-26.04`.
 - `approved_by`/`rejected_by` documented as audit labels, not authentication.
+- Release builds pin `pip`, `build` and `twine`; `mcp` and `setuptools` are pinned
+  exactly in `requirements.txt`/`pyproject.toml`. Dependabot proposes weekly
+  updates for Actions and pip.
+- Prerelease tags are published as prereleases instead of stable releases.
+- Compose healthcheck for `analyzer` uses `--healthy` (read-only, fails until the
+  schema is current) instead of `--status` (always returned 0).
+- Compose services run with a read-only root filesystem, no new privileges and
+  all Linux capabilities dropped; HITL/agent keys are passed only to `mcp`.
 
 ### Security
 
@@ -25,6 +33,12 @@ All notable changes to LogLens are documented here. The format follows
   instead of falling back to the file.
 - Actor labels are normalized and length-limited before being written to the
   audit trail; audit events cannot be updated or deleted from the application.
+- Release notes are extracted with the tag validated as data (`awk -v`), never
+  interpolated into the shell, and an empty changelog section fails the release.
+- `permissions` default to `contents: read` in the Release workflow; only the job
+  that publishes gets `contents: write`.
+- Streamlit CORS is disabled; the CI image smoke really migrates a database and
+  the compose job verifies the database survives `down`/`up`.
 
 ## [0.1.0] — 2026-10-23
 
