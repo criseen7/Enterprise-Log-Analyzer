@@ -101,7 +101,7 @@ class BackfillBatchTests(BackfillSeedMixin, TempDbTestCase):
         def run() -> None:
             try:
                 outcome["updated"] = backfill(self.connect(), PacedRules(), batch_size=2)
-            except BaseException as exc:  # pragma: no cover - se reporta abajo
+            except Exception as exc:  # pragma: no cover - se reporta abajo
                 outcome["error"] = exc
             finally:
                 worker_done.set()
