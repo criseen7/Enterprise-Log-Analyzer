@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 from pathlib import Path
 from typing import Any
 
@@ -23,16 +22,13 @@ from mcp.server.mcpserver.exceptions import ResourceError
 
 from app.analysis.errors import ErrorRules
 from app.mcp.tools.incidents import get_incident
+from app.run_id import validate_run_id
+from app.securefs import open_read_no_follow
 
 SCHEMA_URI = "loglens://schema"
 RULES_URI = "loglens://rules"
 INCIDENT_URI_TEMPLATE = "loglens://incident/{incident_id}"
 TRACE_URI_TEMPLATE = "loglens://trace/{run_id}"
-
-# El nombre del run es el nombre del archivo, así que se valida antes de tocar
-# el disco: sin esto, `loglens://trace/../../etc/passwd` sería una lectura
-# arbitraria disfrazada de resource.
-_RUN_ID = re.compile(r"[A-Za-z0-9._-]{1,80}")
 
 # El glosario es estático a propósito: describe la *semántica*, no la forma
 # física de la tabla. La forma física cambia con las migraciones; el contrato
@@ -199,14 +195,27 @@ def trace_resource(run_id: str) -> str:
     el JSONL es lo que se archiva junto al informe y lo que permite reconstruir
     la corrida paso a paso.
     """
-    if not _RUN_ID.fullmatch(run_id):
-        raise ResourceError(f"run_id inválido: {run_id!r}")
+    # Misma validación que al escribir: un nombre simple, ni "." ni "..".
+    try:
+        validate_run_id(run_id)
+    except ValueError as exc:
+        raise ResourceError(str(exc)) from exc
 
     directory = Path(os.environ.get("LOGLENS_TRACES_DIR", "traces"))
     path = directory / f"{run_id}.jsonl"
-    if not path.is_file():
-        raise ResourceError(f"no existe la traza {run_id!r} en {directory}")
-    return path.read_text(encoding="utf-8")
+    # O_NOFOLLOW: la traza se sirve al modelo. Un symlink en el directorio de
+    # trazas podría apuntar al fichero del secreto HITL y filtrárselo al agente.
+    try:
+        descriptor = open_read_no_follow(path)
+    except FileNotFoundError as exc:
+        raise ResourceError(f"no existe la traza {run_id!r} en {directory}") from exc
+    except ValueError as exc:
+        raise ResourceError(f"traza no legible: {exc}") from exc
+    try:
+        with os.fdopen(descriptor, "r", encoding="utf-8", closefd=False) as handle:
+            return handle.read()
+    finally:
+        os.close(descriptor)
 
 
 __all__ = [

@@ -1059,6 +1059,27 @@ class HitlAuditTests(McpTestCase):
         self.assertEqual(events[1]["actor"], "alice")
         self.assertEqual(events[1]["occurred_at"], approved.approved_at)
 
+    def test_mark_executed_invalida_el_confirm_token(self):
+        action = self._pending()
+        approved = hitl.approve_action(self.conn, action.id, approved_by="alice", secret=self.KEY)
+        token = approved.confirm_token
+        self.assertIsNotNone(token)
+
+        hitl.mark_executed(self.conn, action.id, result="ok")
+
+        stored = hitl.get_action(self.conn, action.id)
+        self.assertIsNone(stored.confirm_token)
+        # Aunque se force la vuelta a APPROVED, el token viejo ya no firma: el
+        # estado por sí solo no basta para reactivar una aprobación ejecutada.
+        self.conn.execute(
+            "UPDATE agent_actions SET status = ? WHERE id = ?", (hitl.APPROVED, action.id)
+        )
+        self.conn.commit()
+        reactivated = hitl.get_action(self.conn, action.id)
+        self.assertFalse(
+            hitl.verify(reactivated, tool="t", params={}, token=token, secret=self.KEY)
+        )
+
     def test_rechazar_tras_aprobar_conserva_al_aprobador(self):
         action = self._pending()
         hitl.approve_action(self.conn, action.id, approved_by="alice", secret=self.KEY)

@@ -93,6 +93,31 @@ def _delta_008_already_applied(conn) -> bool:
     return True
 
 
+# DDL idempotente de `_009`, para reafirmar una migración que se quedó a medias
+# (columna añadida pero versión no registrada). Debe reflejar el SQL del delta.
+_DELTA_009_SETTLE_DDL = """
+CREATE TABLE IF NOT EXISTS hitl_audit (
+    seq         INTEGER PRIMARY KEY AUTOINCREMENT,
+    action_id   TEXT NOT NULL,
+    event       TEXT NOT NULL,
+    actor       TEXT,
+    occurred_at TEXT NOT NULL,
+    detail      TEXT,
+    FOREIGN KEY (action_id) REFERENCES agent_actions(id)
+);
+CREATE INDEX IF NOT EXISTS idx_hitl_audit_action ON hitl_audit (action_id, seq);
+CREATE TRIGGER IF NOT EXISTS trg_hitl_audit_no_update
+BEFORE UPDATE ON hitl_audit
+BEGIN
+    SELECT RAISE(ABORT, 'hitl_audit es append-only');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_hitl_audit_no_delete
+BEFORE DELETE ON hitl_audit
+BEGIN
+    SELECT RAISE(ABORT, 'hitl_audit es append-only');
+END;
+"""
+
 _DELTA_009_BACKFILL = """
 UPDATE agent_actions
    SET rejected_at = approved_at, rejected_by = approved_by
@@ -128,16 +153,23 @@ SELECT id, 'EXECUTED', NULL, executed_at, tool FROM agent_actions
 
 
 def _delta_009_already_applied(conn) -> bool:
-    """True si `_009` ya creó las columnas y la tabla de auditoría.
+    """Reafirma `_009` si dejó algún efecto, y devuelve si debe saltarse.
 
-    `ALTER TABLE ... ADD COLUMN` falla si el DDL se aplicó pero la versión no
-    llegó a registrarse. El backfill se reafirma porque es idempotente.
+    Basta con que exista una de las dos columnas o la tabla para concluir que el
+    script corrió: comprobar sólo `rejected_by` dejaba atascada una base cuyo
+    primer `ALTER` (`rejected_at`) se aplicó y el segundo no. Las piezas que
+    falten se crean aquí; el backfill es idempotente y se reafirma siempre.
     """
-    if not _column_exists(conn, "agent_actions", "rejected_by"):
+    has_at = _column_exists(conn, "agent_actions", "rejected_at")
+    has_by = _column_exists(conn, "agent_actions", "rejected_by")
+    has_table = _table_exists(conn, "hitl_audit")
+    if not (has_at or has_by or has_table):
         return False
-    if not _table_exists(conn, "hitl_audit"):
-        return False
-    conn.executescript(_DELTA_009_BACKFILL)
+    if not has_at:
+        conn.execute("ALTER TABLE agent_actions ADD COLUMN rejected_at TEXT")
+    if not has_by:
+        conn.execute("ALTER TABLE agent_actions ADD COLUMN rejected_by TEXT")
+    conn.executescript(_DELTA_009_SETTLE_DDL + _DELTA_009_BACKFILL)
     return True
 
 

@@ -187,7 +187,8 @@ def _known_files(config) -> set[Path]:
     """Archivos que `discover()`/`Settings.log_files` considera ingeribles.
 
     Es la fuente de verdad para el watcher: `Settings.log_files` aplica el mismo
-    glob, el mismo `is_file()` y la misma resolución que la ingesta por polling.
+    glob, el mismo `is_file()`, descarta symlinks y resuelve el resto igual que
+    la ingesta por polling.
     """
     return set(config.log_files)
 
@@ -196,7 +197,8 @@ def _match_known(raw: str | None, conocidos: set[Path]) -> Path | None:
     """Ruta resuelta si está en `conocidos`; `None` si no aplica.
 
     Validar por nombre base divergía de `discover()` con patrones que llevan
-    directorio (p. ej. `arch/*.log`) y con enlaces simbólicos.
+    directorio (p. ej. `arch/*.log`). Un symlink resuelve a su objetivo, pero
+    éste no está en `conocidos` porque `Settings.log_files` lo descartó.
     """
     if not raw:
         return None

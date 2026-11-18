@@ -117,6 +117,35 @@ class IncidentWatermarkMigrationTests(unittest.TestCase):
                 conn.close()
 
 
+def _v8_db_with_actions(tmp: str) -> Path:
+    """Base v8 con una acción rechazada, para exercitar el delta `_009`."""
+    db_path = Path(tmp) / "app.db"
+    conn = connect(db_path)
+    conn.execute(
+        "CREATE TABLE schema_version (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)"
+    )
+    conn.executemany(
+        "INSERT INTO schema_version (version, applied_at) VALUES (?, '2026-01-01T00:00:00Z')",
+        [(version,) for version in range(1, 9)],
+    )
+    conn.execute(
+        "CREATE TABLE agent_actions ("
+        "id TEXT PRIMARY KEY, tool TEXT NOT NULL, params TEXT NOT NULL, "
+        "status TEXT NOT NULL DEFAULT 'PENDING', confirm_token TEXT, "
+        "created_at TEXT NOT NULL, expires_at TEXT NOT NULL, "
+        "approved_at TEXT, approved_by TEXT, executed_at TEXT, result TEXT)"
+    )
+    conn.execute(
+        "INSERT INTO agent_actions (id, tool, params, status, confirm_token, "
+        "created_at, expires_at, approved_at, approved_by, executed_at, result) "
+        "VALUES ('rechazada', 't', '{}', 'REJECTED', NULL, "
+        "'2026-10-01T10:00:00.000Z', '2026-10-01T10:15:00.000Z', "
+        "'2026-10-01T10:05:00.000Z', 'bob', NULL, NULL)"
+    )
+    conn.close()
+    return db_path
+
+
 class HitlAuditMigrationTests(unittest.TestCase):
     def test_v8_a_v9_backfill_el_historial_y_separa_el_rechazo(self):
         with tempfile.TemporaryDirectory(prefix="ela-migrate-v9-") as tmp:
@@ -205,6 +234,73 @@ class HitlAuditMigrationTests(unittest.TestCase):
                 conn.close()
 
             self.assertEqual(migrate(db_path), [])
+
+    def test_v9_parcial_con_solo_rejected_at_se_recupera(self):
+        # Estado dejado por la versión anterior del guard: el primer ALTER se
+        # aplicó pero el segundo no, y la versión nunca se registró.
+        with tempfile.TemporaryDirectory(prefix="ela-migrate-v9-parcial-") as tmp:
+            db_path = _v8_db_with_actions(tmp)
+            conn = connect(db_path)
+            conn.execute("ALTER TABLE agent_actions ADD COLUMN rejected_at TEXT")
+            conn.close()
+
+            self.assertIn(9, migrate(db_path))
+
+            conn = connect(db_path)
+            try:
+                columns = {
+                    str(row["name"])
+                    for row in conn.execute("SELECT name FROM pragma_table_info('agent_actions')")
+                }
+                self.assertIn("rejected_at", columns)
+                self.assertIn("rejected_by", columns)
+                self.assertTrue(migrations._table_exists(conn, "hitl_audit"))
+                row = conn.execute(
+                    "SELECT rejected_by, rejected_at FROM agent_actions WHERE id = 'rechazada'"
+                ).fetchone()
+                self.assertEqual(row["rejected_by"], "bob")
+                self.assertEqual(row["rejected_at"], "2026-10-01T10:05:00.000Z")
+                event = conn.execute(
+                    "SELECT event FROM hitl_audit WHERE action_id = 'rechazada'"
+                ).fetchone()
+                self.assertIsNotNone(event)
+            finally:
+                conn.close()
+            self.assertEqual(migrate(db_path), [])
+
+    def test_v9_fallo_en_el_backfill_no_deja_ddl_a_medias(self):
+        with tempfile.TemporaryDirectory(prefix="ela-migrate-v9-atomic-") as tmp:
+            db_path = _v8_db_with_actions(tmp)
+
+            sql = migrations._deltas[9].read_text(encoding="utf-8")
+            roto = Path(tmp) / "_009_roto.sql"
+            roto.write_text(
+                sql.replace(
+                    "\nCOMMIT;",
+                    "\nINSERT INTO tabla_inexistente (x) VALUES (1);\nCOMMIT;",
+                ),
+                encoding="utf-8",
+            )
+
+            with mock.patch.dict(migrations._deltas, {9: roto}):
+                with self.assertRaises(sqlite3.Error):
+                    migrate(db_path)
+
+            conn = connect(db_path)
+            try:
+                columns = {
+                    str(row["name"])
+                    for row in conn.execute("SELECT name FROM pragma_table_info('agent_actions')")
+                }
+                self.assertNotIn("rejected_at", columns)
+                self.assertNotIn("rejected_by", columns)
+                self.assertFalse(migrations._table_exists(conn, "hitl_audit"))
+                self.assertEqual(migrations.applied_versions(conn)[-1], 8)
+            finally:
+                conn.close()
+
+            # Con el script real la migración termina: la base no quedó atascada.
+            self.assertIn(9, migrate(db_path))
 
 
 if __name__ == "__main__":

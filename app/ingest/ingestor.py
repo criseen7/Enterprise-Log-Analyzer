@@ -47,6 +47,7 @@ from app.db.repository import (
 )
 from app.ingest.reader import RawEntry, iter_entry_batches
 from app.parser.registry import Registry
+from app.securefs import open_read_no_follow
 
 
 @dataclass
@@ -150,11 +151,14 @@ def ingest_file(
     clasificación convivirían en la misma base.
     """
     rules = rules or ErrorRules.default()
-    resolved = path.resolve()
+    # O_NOFOLLOW: un symlink en `logs/` apuntaría a cualquier fichero legible
+    # del host y su contenido acabaría como evento consultable vía MCP.
     try:
-        fd = os.open(resolved, os.O_RDONLY)
+        fd = open_read_no_follow(path)
     except (FileNotFoundError, NotADirectoryError):
         return FileResult(path, "vanished", "no existe en disco")
+    except ValueError as exc:
+        return FileResult(path, "error", str(exc))
 
     entries = 0
     counts = InsertCounts()

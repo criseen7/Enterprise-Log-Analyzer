@@ -668,7 +668,7 @@ def mark_executed(conn: sqlite3.Connection, action_id: str, *, result: str = "")
         cursor = conn.execute(
             """
             UPDATE agent_actions
-               SET status = ?, executed_at = ?, result = ?
+               SET status = ?, confirm_token = NULL, executed_at = ?, result = ?
              WHERE id = ? AND status = ?
             """,
             (EXECUTED, now, result, action_id, APPROVED),

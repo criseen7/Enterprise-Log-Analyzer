@@ -168,6 +168,29 @@ class TraceResourceTests(McpTestCase):
             trace_resource("../../etc/passwd")
         self.assertIn("inválido", str(ctx.exception))
 
+    def test_no_sigue_un_symlink_hacia_el_secreto(self):
+        from app.mcp.resources import trace_resource
+
+        secret = self.root / "app.db.hitl_secret"
+        secret.write_text("secreto-que-no-debe-filtrarse", encoding="utf-8")
+        link = self.traces / "run-link.jsonl"
+        try:
+            os.symlink(secret, link)
+        except (OSError, NotImplementedError):
+            self.skipTest("el sistema no admite symlinks")
+
+        with self.assertRaises(Exception) as ctx:
+            trace_resource("run-link")
+        self.assertNotIn("secreto-que-no-debe-filtrarse", str(ctx.exception))
+
+    def test_run_id_punto_o_punto_padre_es_invalido(self):
+        from app.mcp.resources import trace_resource
+
+        for run_id in (".", ".."):
+            with self.assertRaises(Exception) as ctx:
+                trace_resource(run_id)
+            self.assertIn("inválido", str(ctx.exception))
+
     def test_un_run_id_codificado_no_alcanza_el_disco(self):
         with self.assertRaises(Exception) as ctx:
             self._read("loglens://trace/..%2F..%2Fetc%2Fpasswd")

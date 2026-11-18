@@ -57,6 +57,29 @@ class IngestBase(TempDbTestCase):
         return [r[0] for r in self.conn.execute("SELECT message FROM events ORDER BY offset")]
 
 
+class SymlinkTests(IngestBase):
+    def test_un_symlink_en_logs_no_se_ingiere(self):
+        fuera = self.root / "secreto.txt"
+        fuera.write_text(JSON.format(n=1), encoding="utf-8")
+        enlace = self.log_dir / "app.log"
+        try:
+            os.symlink(fuera, enlace)
+        except (OSError, NotImplementedError):
+            self.skipTest("el sistema no admite symlinks")
+
+        result = ingest_file(self.conn, enlace, self.registry)
+        self.assertEqual(result.status, "error")
+        self.assertEqual(count_events(self.conn), 0)
+
+    def test_log_files_excluye_symlinks(self):
+        real = self.write_log("app.log", [JSON.format(n=1)])
+        try:
+            os.symlink(real, self.log_dir / "copia.log")
+        except (OSError, NotImplementedError):
+            self.skipTest("el sistema no admite symlinks")
+        self.assertEqual(self.settings().log_files, [real])
+
+
 class IdempotenciaTest(IngestBase):
     def test_dos_pasadas_no_duplican(self):
         self.append(WLS.format(n=1))

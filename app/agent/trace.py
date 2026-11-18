@@ -18,22 +18,17 @@ from __future__ import annotations
 
 import json
 import os
-import re
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from app.agent.contracts import AgentRun
 from app.mcp._context import write_connection
+from app.run_id import validate_run_id
 from app.securefs import ensure_private_dir, open_private_for_write
 from app.timeutil import to_canonical
 
 DEFAULT_TRACES_DIR = Path("traces")
-
-# El `run_id` se usa como nombre de archivo. Sin validarlo, un id con `/` o `..`
-# escribe fuera de `traces/`. La regla es la misma que la del resource
-# `loglens://trace/{run_id}`: si no es un nombre simple, no es un run.
-_RUN_ID = re.compile(r"[A-Za-z0-9._-]{1,80}")
 
 # Claves cuyo valor no debe acabar en un JSONL que se publica. Se comparan por
 # subcadena y en minúsculas: `apiKey`, `X-Api-Key` y `confirm_token` caen todos.
@@ -71,11 +66,6 @@ def _is_secret_key(key: Any) -> bool:
     return any(marker in lowered for marker in _SECRET_MARKERS)
 
 
-def _validate_run_id(run_id: str) -> None:
-    if not _RUN_ID.fullmatch(run_id) or run_id in {".", ".."}:
-        raise ValueError(f"run_id inválido: {run_id!r}")
-
-
 def traces_dir() -> Path:
     """Directorio de trazas: `LOGLENS_TRACES_DIR` o `traces/` en el cwd."""
     return Path(os.environ.get("LOGLENS_TRACES_DIR", DEFAULT_TRACES_DIR))
@@ -85,7 +75,7 @@ class TraceRecorder:
     """Escribe una línea JSON por evento. Se puede usar como context manager."""
 
     def __init__(self, run_id: str, directory: str | Path | None = None) -> None:
-        _validate_run_id(run_id)
+        validate_run_id(run_id)
         self.run_id = run_id
         self.directory = Path(directory) if directory is not None else traces_dir()
         ensure_private_dir(self.directory)
