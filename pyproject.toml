@@ -45,7 +45,7 @@ dashboard = [
 dev = [
     "pytest==9.2.0",
     "ruff==0.17.2",
-    "mypy==2.4.0",
+    "mypy==2.4.1",
 ]
 # La capa agentic es opcional: sin el extra, el planner heurístico y el
 # sintetizador determinista funcionan igual. El import de `anthropic` es
