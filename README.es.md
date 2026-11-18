@@ -197,7 +197,7 @@ app/agent/       planner, executor, verifier, citas, síntesis, traza
 app/ui/          dashboard Streamlit (extra opcional)
 evals/           dataset, generadores, harness, métricas, ablaciones
 docs/            ADR-001…008, metodología de evals, trazas reales
-tests/           339 tests, incluidos pureza del motor y goldens
+tests/           518 tests, incluidos pureza del motor y goldens
 ```
 
 ## Decisiones de diseño

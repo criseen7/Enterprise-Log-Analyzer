@@ -47,6 +47,7 @@ from pathlib import Path
 
 from app.config import Settings, get_settings
 from app.db.connection import transaction
+from app.envvars import HITL_SECRET as SECRET_ENV_VAR
 from app.securefs import ensure_private_dir, read_private
 from app.timeutil import to_canonical
 
@@ -74,7 +75,6 @@ DEFAULT_TTL_SECONDS = 900
 MAX_ACTIONS = 200
 
 # Variable de entorno con la clave del HMAC. Si está, manda sobre el fichero.
-SECRET_ENV_VAR = "LOGLENS_HITL_SECRET"
 
 # Un HMAC-SHA256 necesita una clave con entropía real. La ruta automática
 # genera 64 hex (32 bytes), y la explícita se valida con los mismos criterios.

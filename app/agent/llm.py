@@ -20,6 +20,8 @@ from typing import Any, Protocol, runtime_checkable
 
 from pydantic import BaseModel
 
+from app.envvars import ANTHROPIC_API_KEY as API_KEY_ENV_VAR
+
 # Precios aproximados en USD por millón de tokens (entrada, salida). Están aquí
 # y no en `config.yaml` para que una corrida antigua se pueda recalcular con la
 # tabla con la que se hizo, en vez de con la que esté vigente hoy. Se declaran
@@ -150,7 +152,7 @@ class AnthropicClient:
             raise LLMUnavailable(
                 "falta el paquete 'anthropic'; instala el extra: pip install -e '.[agent]'"
             ) from exc
-        key = self.api_key or os.environ.get("ANTHROPIC_API_KEY")
+        key = self.api_key or os.environ.get(API_KEY_ENV_VAR)
         if not key:
             raise LLMUnavailable("falta ANTHROPIC_API_KEY")
         self._client = anthropic.Anthropic(api_key=key, timeout=self.timeout)
@@ -224,12 +226,13 @@ def build_client(model: str = "claude-sonnet-4-5") -> LLMClient:
     No cae a `NullClient` en silencio: un informe generado por respuestas
     grabadas en producción sería peor que un error, porque parecería real.
     """
-    if not os.environ.get("ANTHROPIC_API_KEY"):
+    if not os.environ.get(API_KEY_ENV_VAR):
         raise LLMUnavailable("falta ANTHROPIC_API_KEY; usa el planner heurístico o define la clave")
     return AnthropicClient()
 
 
 __all__ = [
+    "API_KEY_ENV_VAR",
     "DEFAULT_PRICING",
     "PRICING_USD_PER_MTOK",
     "AnthropicClient",

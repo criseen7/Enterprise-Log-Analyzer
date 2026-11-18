@@ -55,7 +55,7 @@ Concretamente:
 - Los evals tienen ground truth y una métrica de recuperación que no depende del
   modelo. Eso es lo que permite publicar números.
 - El motor se puede testear con fixtures golden, que es exactamente lo que ya hace
-  el repo con 207 tests.
+  el repo con 518 tests.
 - Cambiar de modelo no cambia lo que el sistema **detecta**, sólo cómo lo redacta.
   Verificable con el ablation A4.
 - El producto funciona sin API key y sin coste por consulta.

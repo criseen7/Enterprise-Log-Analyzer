@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any
 
 from app.agent.contracts import AgentRun
+from app.envvars import TRACES_DIR as TRACES_ENV_VAR
 from app.mcp._context import write_connection
 from app.run_id import validate_run_id
 from app.securefs import ensure_private_dir, open_private_for_write
@@ -39,7 +40,7 @@ def _redact(value: Any) -> Any:
 
 def traces_dir() -> Path:
     """Directorio de trazas: `LOGLENS_TRACES_DIR` o `traces/` en el cwd."""
-    return Path(os.environ.get("LOGLENS_TRACES_DIR", DEFAULT_TRACES_DIR))
+    return Path(os.environ.get(TRACES_ENV_VAR, DEFAULT_TRACES_DIR))
 
 
 class TraceRecorder:

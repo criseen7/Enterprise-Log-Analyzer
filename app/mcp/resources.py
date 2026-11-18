@@ -21,6 +21,7 @@ from typing import Any
 from mcp.server.mcpserver.exceptions import ResourceError
 
 from app.analysis.errors import ErrorRules
+from app.envvars import TRACES_DIR as TRACES_ENV_VAR
 from app.mcp.tools.incidents import get_incident
 from app.run_id import validate_run_id
 from app.securefs import open_read_no_follow
@@ -202,7 +203,7 @@ def trace_resource(run_id: str) -> str:
     except ValueError as exc:
         raise ResourceError(str(exc)) from exc
 
-    directory = Path(os.environ.get("LOGLENS_TRACES_DIR", "traces"))
+    directory = Path(os.environ.get(TRACES_ENV_VAR, "traces"))
     path = directory / f"{run_id}.jsonl"
     # O_NOFOLLOW: la traza se sirve al modelo. Un symlink en el directorio de
     # trazas podría apuntar al fichero del secreto HITL y filtrárselo al agente.

@@ -83,7 +83,7 @@ ignore = []
 quote-style = "double"
 
 # --- Mypy ------------------------------------------------------------------
-# Acotado a propósito a la capa nueva. El motor existente (207 tests) no está
+# Acotado a propósito a la capa nueva. El motor existente (518 tests) no está
 # tipado y convertirlo entero sería un refactor que no aporta nada al objetivo;
 # la frontera y el bucle sí se tipan porque son lo que se publica.
 [tool.mypy]
