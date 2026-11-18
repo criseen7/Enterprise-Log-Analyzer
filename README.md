@@ -144,6 +144,15 @@ table, with actor and timestamp. Use `loglens history <action_id>` to read it.
 single-user local release does not authenticate the CLI operator. A multi-user
 release must derive the actor from an authenticated session instead.
 
+With Docker, the database and the HITL secret live in the `ela-data` volume, so
+run the approval CLI inside the MCP container — it shares the same key as the
+server process:
+
+```bash
+docker compose exec -T mcp loglens pending
+docker compose exec -T mcp loglens approve <action_id>
+```
+
 ---
 
 ## Evals
@@ -225,10 +234,19 @@ port.
 Docker, three services — analyzer, dashboard, MCP — on one database:
 
 ```bash
-docker compose up --build
+docker compose up --build    # waits until every service is healthy
 # dashboard  http://localhost:8501        (loopback only: no auth of its own)
 # MCP        http://localhost:8000/mcp    (loopback only: the SDK has no auth)
 ```
+
+The `analyzer` migrates the database at startup; the other services wait for a
+`--healthy` check (read-only, fails until the schema is at the target version).
+Every service runs as uid 10001 with a read-only root filesystem, no new
+privileges, no Linux capabilities and a writable `/tmp`. `docker compose down`
+keeps the named volumes, so the database, exports and traces survive a rebuild.
+To inject a production HITL key or an agent API key, set `LOGLENS_HITL_SECRET`
+and/or `ANTHROPIC_API_KEY` in the host environment (or in `.env`) before `up`;
+they are passed to the MCP container only.
 
 Claude Desktop config: [`docs/mcp-config.json`](docs/mcp-config.json).
 

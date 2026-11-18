@@ -7,6 +7,7 @@ scripts y para CI. `--watch` deja el proceso vivo y delega en `watcher`.
     python3 -m app.ingest                 # una pasada
     python3 -m app.ingest --watch         # sigue los cambios
     python3 -m app.ingest --status        # qué hay en la DB, sin ingerir
+    python3 -m app.ingest --healthy       # healthcheck: exige esquema al día
 """
 
 from __future__ import annotations
@@ -32,6 +33,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--once", action="store_true", help="una pasada y salir (por defecto)")
     parser.add_argument("--watch", action="store_true", help="vigilar cambios y ingerir")
     parser.add_argument("--status", action="store_true", help="mostrar estado y salir")
+    parser.add_argument(
+        "--healthy",
+        action="store_true",
+        help="comprobar que el esquema está al día sin migrar; exit 1 si no lo está",
+    )
     parser.add_argument("--config", type=Path, default=None, help="ruta a config.yaml")
     return parser
 
@@ -61,11 +67,20 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     config = load_settings(config_path=args.config)
 
-    # `--status` es de solo lectura: no debe migrar ni crear el esquema. Un
-    # operador que pregunta "¿en qué versión está la base?" no espera que la
-    # pregunta la modifique.
-    if args.status:
+    # `--status` y `--healthy` son de solo lectura: no deben migrar ni crear el
+    # esquema. `--status` informa siempre; `--healthy` falla si la base no está
+    # en la versión objetivo, que es lo que necesita un healthcheck.
+    if args.status or args.healthy:
         current, target = schema_status(config.paths.db_path)
+        if args.healthy:
+            if current == 0:
+                print(f"base sin migrar (v0, objetivo v{target})")
+                return 1
+            if current != target:
+                print(f"base desactualizada (v{current}, objetivo v{target})")
+                return 1
+            print(f"base lista (v{current})")
+            return 0
         if current == 0:
             print(f"base sin migrar (v0, objetivo v{target})")
             return 0

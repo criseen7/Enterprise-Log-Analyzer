@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools==84.2.1"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -29,7 +29,7 @@ classifiers = [
 # pandas y sin Plotly. Lo que se paga en comodidad se gana en que el servidor
 # arranque en 200 ms y en que las dependencias del motor sean auditables.
 dependencies = [
-    "mcp>=2.3,<3",
+    "mcp==2.3.0",
     "PyYAML>=6.0.3",
 ]
 

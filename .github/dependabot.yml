@@ -1,0 +1,17 @@
+version: 2
+updates:
+  # Las Actions están pineadas a SHA:Dependabot es lo que propone el salto a
+  # un SHA nuevo cuando sale una versión. Sin esto, los pins envejecen sin que
+  # nadie los revise.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+
+  # Las dependencias Python van update a update en requirements*.txt y en
+  # pyproject.toml. Pin exacto + PR semanal = un cambio revisable, no un salto
+  # silencioso que altera los conteos o el contrato del servidor MCP.
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly

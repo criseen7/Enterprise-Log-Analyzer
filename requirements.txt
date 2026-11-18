@@ -6,8 +6,9 @@ PyYAML==6.0.3
 
 # --- Fase 5: frontera MCP ----------------------------------------------
 # El SDK v2 renombró FastMCP a MCPServer y movió la config de transporte a
-# run(). Se pinea <3 porque el salto a v3 es un cambio de API, no un parche.
-mcp>=2.3,<3
+# run(). Pin exacto: el salto a v3 es un cambio de API y un parche distinto
+# puede cambiar el contrato de las tools.
+mcp==2.3.0
 
 # --- Fase 3/4: análisis y dashboard ------------------------------------
 # pandas 2.2.3 no publica ruedas para Python 3.14 (el runtime del proyecto), y
@@ -17,12 +18,6 @@ pandas==2.3.3
 plotly==6.0.1
 streamlit==1.67.0
 watchdog==6.0.0
-
-# --- Frontera MCP ------------------------------------------------------
-# El servidor MCP no necesita pandas, plotly ni streamlit: se instalan aquí
-# porque este archivo es el del despliegue completo (analyzer + dashboard +
-# MCP en la misma imagen).
-mcp>=2.3,<3
 
 # Nota: las versiones están pinneadas a propósito. Un log analyzer debe ser
 # reproducible: un cambio de versión de pandas no debe cambiar los conteos.

@@ -666,5 +666,55 @@ class StatusCliTest(TempDbTestCase):
         self.assertFalse(self.db_path.exists(), "--status es de solo lectura")
 
 
+class HealthyCliTest(TempDbTestCase):
+    migrate_db = False
+
+    def _config(self) -> Path:
+        config = self.root / "config.yaml"
+        config.write_text(
+            "paths:\n"
+            f"  log_dir: {self.log_dir}\n"
+            f"  db_path: {self.db_path}\n"
+            f"  export_dir: {self.export_dir}\n",
+            encoding="utf-8",
+        )
+        return config
+
+    def _check(self) -> tuple[int, str]:
+        from contextlib import redirect_stdout
+
+        from app.ingest.__main__ import main as ingest_main
+
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = ingest_main(["--healthy", "--config", str(self._config())])
+        return code, out.getvalue()
+
+    def test_base_sin_migrar_no_esta_sana(self):
+        code, text = self._check()
+        self.assertNotEqual(code, 0)
+        self.assertIn("sin migrar", text)
+
+    def test_base_migrada_esta_sana(self):
+        from app.db.migrations import migrate
+
+        migrate(self.db_path)
+        code, text = self._check()
+        self.assertEqual(code, 0)
+        self.assertIn("base lista", text)
+
+    def test_base_desactualizada_no_esta_sana(self):
+        from app.db.migrations import migrate
+
+        migrate(self.db_path, target=8)
+        code, text = self._check()
+        self.assertNotEqual(code, 0)
+        self.assertIn("desactualizada", text)
+
+    def test_healthy_no_migra_ni_crea_la_base(self):
+        self._check()
+        self.assertFalse(self.db_path.exists(), "--healthy es de solo lectura")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

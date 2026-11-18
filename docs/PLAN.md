@@ -382,18 +382,26 @@ export **CSV** y **HTML** autocontenido · estados OPEN/ACK/RESOLVED
 `Dockerfile` multi-stage (`python:3.14-slim` pinneado) · usuario no-root (uid 10001)
 · `.dockerignore` · `docker-compose.yml` con servicios `analyzer` (watcher, único
 escritor) y `dashboard` separados · **volúmenes** `logs:ro`, `ela-data`,
-`ela-exports` · healthchecks (base de datos en `analyzer`, `/_stcore/health` en
-`dashboard`) · `dashboard` arranca sólo cuando `analyzer` está sano, para serializar
-la migración inicial.
+`ela-exports` · healthchecks (`--healthy` en `analyzer`, `/_stcore/health` en
+`dashboard`, socket en `mcp`) · `dashboard` y `mcp` arrancan sólo cuando `analyzer`
+está sano, para serializar la migración inicial. `--healthy` es de sólo lectura
+pero falla mientras el esquema no esté en la versión objetivo; `--status`, que se
+usaba antes, devolvía 0 incluso con la base sin migrar.
 
 **Aceptación:**
 - [x] Multi-stage, imagen base pinneada y usuario no-root
 - [x] `.dockerignore` excluye `.git`, `.venv`, datos, logs, tests y docs
 - [x] Servicios separados con volúmenes `logs:ro` / `data` / `exports`
-- [x] Healthchecks en ambos servicios
-- [ ] `docker compose up` desde repo limpio · `data/app.db` sobrevive a `down` + `build`
-      — *pendiente de ejecutar donde haya Docker: el entorno de desarrollo no tenía
-      integración WSL 2. Verificar con `make docker-up`.*
+- [x] Healthchecks en los tres servicios; el de `analyzer` exige esquema al día
+- [x] Hardening: usuario no-root, `no-new-privileges`, `cap_drop: ALL`, rootfs de
+      sólo lectura con `/tmp` en tmpfs, secretos HITL/agente inyectados sólo en `mcp`
+- [x] CI: job `compose` con `up -d --wait` → `down` → `up -d --wait` y `--healthy`
+      después de recrear los contenedores (la DB sobrevive porque `down` conserva
+      los named volumes)
+- [ ] `docker compose up` desde repo limpio en local · `data/app.db` sobrevive a
+      `down` + `build` — *pendiente de ejecutar donde haya Docker: el entorno de
+      desarrollo no tenía integración WSL 2. El job de CI cubre la misma ruta;
+      verificar en local con `make docker-up`.*
 
 Los volúmenes `ela-data` / `ela-exports` son **named volumes**: `docker compose down`
 no los borra (sólo `down -v`), por eso la base sobrevive a un rebuild.

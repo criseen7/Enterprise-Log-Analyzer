@@ -12,7 +12,7 @@ RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
 COPY requirements.txt ./
-RUN pip install --upgrade pip && pip install -r requirements.txt
+RUN pip install pip==26.3 && pip install -r requirements.txt
 
 # --- Etapa 2: runtime -----------------------------------------------------
 FROM python:3.14-slim@sha256:9aaa474097d094040649f2162a627c0049b408f52138d980916788d80f04802f AS runtime
@@ -34,6 +34,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     STREAMLIT_SERVER_HEADLESS=true \
     STREAMLIT_SERVER_ADDRESS=0.0.0.0 \
     STREAMLIT_SERVER_PORT=8501 \
+    STREAMLIT_SERVER_ENABLECORS=false \
     STREAMLIT_BROWSER_GATHER_USAGE_STATS=false
 
 COPY --from=builder /opt/venv /opt/venv

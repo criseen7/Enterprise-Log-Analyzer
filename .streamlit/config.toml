@@ -6,7 +6,7 @@
 address = "127.0.0.1"
 headless = true
 enableXsrfProtection = true
-enableCORS = true
+enableCORS = false
 
 [browser]
 gatherUsageStats = false

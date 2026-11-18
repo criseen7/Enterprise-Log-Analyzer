@@ -14,7 +14,7 @@ help: ## Muestra esta ayuda
 
 install: ## Crea el venv e instala dependencias
 	$(PYTHON) -m venv $(VENV)
-	$(VENV)/bin/pip install --upgrade pip
+	$(VENV)/bin/pip install pip==26.3
 	$(VENV)/bin/pip install -r requirements.txt -r requirements-dev.txt
 
 migrate: ## Crea/actualiza la base de datos

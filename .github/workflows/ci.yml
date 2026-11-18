@@ -139,5 +139,37 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
       - name: la imagen arranca y migra
+        # Un contenedor único: migrar y comprobar la salud contra la misma DB,
+        # no contra una filesystem efímera distinta en cada `docker run`.
         run: |
-          docker run --rm loglens:ci python -m app.db.migrations --status
+          docker run --rm loglens:ci sh -c \
+            "python -m app.db.migrations && python -m app.ingest --healthy"
+
+  compose:
+    name: docker compose (arranque, HITL y persistencia)
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: primer arranque
+        run: docker compose up -d --wait
+      - name: el esquema está al día
+        run: docker compose exec -T analyzer python -m app.ingest --healthy
+      - name: el secreto HITL se comparte dentro del contenedor
+        run: |
+          docker compose exec -T mcp python -c \
+            "from app.mcp.hitl import load_secret; assert len(load_secret()) >= 32"
+      - name: la base sobrevive a down/up
+        # `down` sin -v conserva los volúmenes con nombre: la DB migrada y el
+        # secreto tienen que seguir ahí después de recrear los contenedores.
+        run: |
+          docker compose down
+          docker compose up -d --wait
+          docker compose exec -T analyzer python -m app.ingest --healthy
+      - name: el dashboard responde
+        run: curl -fsS http://127.0.0.1:8501/_stcore/health
+      - name: volcado si algo falla
+        if: failure()
+        run: docker compose logs --no-color
+      - name: limpieza
+        if: always()
+        run: docker compose down
