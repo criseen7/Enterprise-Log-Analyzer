@@ -42,7 +42,7 @@ SECTIONS: tuple[tuple[str, tuple[type, ...]], ...] = (
 EXTRA_SECTION = "Agente y HITL (sólo el contenedor mcp)"
 
 EXTRA_VALUES: dict[str, str] = {
-    HITL_SECRET: "cambia-esto-por-32-bytes-aleatorios-como-minimo",
+    HITL_SECRET: "cambia-esto-por-32-bytes-aleatorios-como-minimo",  # pragma: allowlist secret
     TRACES_DIR: "/data/traces",
     ANTHROPIC_API_KEY: "",
 }
@@ -166,7 +166,10 @@ def render() -> str:
     lines.append(_section(EXTRA_SECTION))
     for name, value in extra.items():
         lines.extend(f"# {comment}" for comment in DOCUMENTATION[name])
-        lines.append(f"#{name}={value}")
+        line = f"#{name}={value}"
+        if name == HITL_SECRET:
+            line += "  # pragma: allowlist secret"
+        lines.append(line)
     lines.append("")
     return "\n".join(lines)
 

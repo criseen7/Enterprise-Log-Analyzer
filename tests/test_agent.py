@@ -836,12 +836,17 @@ class TraceRecorderTests(AgentFixture):
         with TraceRecorder("run-free-text", directory=self.trace_dir) as recorder:
             recorder.record(
                 "llm.response",
-                text="Authorization: Bearer sk-ant-abc123def456",
-                detail="api_key=sk-live-xyz789 y token: abc123XYZ",
-                nested=["Bearer sk-ant-SECRETO", "visible"],
+                text="Authorization: Bearer sk-ant-abc123def456",  # pragma: allowlist secret
+                detail="api_key=sk-live-xyz789 y token: abc123XYZ",  # pragma: allowlist secret
+                nested=["Bearer sk-ant-SECRETO", "visible"],  # pragma: allowlist secret
             )
         raw = (self.trace_dir / "run-free-text.jsonl").read_text(encoding="utf-8")
-        for secret in ("sk-ant-abc123def456", "sk-live-xyz789", "abc123XYZ", "sk-ant-SECRETO"):
+        for secret in (
+            "sk-ant-abc123def456",  # pragma: allowlist secret
+            "sk-live-xyz789",  # pragma: allowlist secret
+            "abc123XYZ",  # pragma: allowlist secret
+            "sk-ant-SECRETO",  # pragma: allowlist secret
+        ):
             self.assertNotIn(secret, raw)
         self.assertIn("[REDACTED]", raw)
         self.assertIn("visible", raw)
