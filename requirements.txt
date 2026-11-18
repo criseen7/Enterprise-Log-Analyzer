@@ -15,7 +15,7 @@ mcp==2.3.0
 # compilarla desde fuente exigiría una cadena de build. 2.3.3 es la primera con
 # wheel cp314 y mantiene el mismo contrato; el resto de pins no cambia.
 pandas==2.3.3
-plotly==6.0.1
+plotly==7.1.0
 streamlit==1.67.0
 watchdog==6.0.0
 
