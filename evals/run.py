@@ -24,7 +24,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from app.agent.llm import LLMUnavailable, build_client
+from app.agent.llm import API_KEY_ENV_VAR, LLMUnavailable, build_client
 from evals.cache import DEFAULT_CACHE_DIR, CachedClient
 from evals.dataset.build import DEFAULT_PATH as CASES_PATH
 from evals.dataset.build import dataset_hash, load_cases, subset_cases
@@ -84,7 +84,7 @@ def _make_client(args: argparse.Namespace) -> tuple[Any, str]:
     """Devuelve `(cliente, estado)`; estado `"heuristic"` o `"llm"`."""
     if args.plan == "heuristic":
         return None, "heuristic"
-    if os.environ.get("ANTHROPIC_API_KEY") and importlib.util.find_spec("anthropic") is None:
+    if os.environ.get(API_KEY_ENV_VAR) and importlib.util.find_spec("anthropic") is None:
         print(
             "ERROR: ANTHROPIC_API_KEY está definida pero falta el paquete 'anthropic'. "
             "Instala las dependencias de eval: pip install -r requirements-evals.txt",

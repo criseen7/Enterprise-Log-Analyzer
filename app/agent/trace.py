@@ -18,74 +18,36 @@ from __future__ import annotations
 
 import json
 import os
-import re
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from app.agent.contracts import AgentRun
+from app.envvars import TRACES_DIR as TRACES_ENV_VAR
 from app.mcp._context import write_connection
+from app.run_id import validate_run_id
 from app.securefs import ensure_private_dir, open_private_for_write
 from app.timeutil import to_canonical
+from app.trust import REDACTED, redact_text, redact_value
 
 DEFAULT_TRACES_DIR = Path("traces")
 
-# El `run_id` se usa como nombre de archivo. Sin validarlo, un id con `/` o `..`
-# escribe fuera de `traces/`. La regla es la misma que la del resource
-# `loglens://trace/{run_id}`: si no es un nombre simple, no es un run.
-_RUN_ID = re.compile(r"[A-Za-z0-9._-]{1,80}")
-
-# Claves cuyo valor no debe acabar en un JSONL que se publica. Se comparan por
-# subcadena y en minúsculas: `apiKey`, `X-Api-Key` y `confirm_token` caen todos.
-_SECRET_MARKERS = (
-    "token",
-    "secret",
-    "password",
-    "passwd",
-    "api_key",
-    "apikey",
-    "authorization",
-    "credential",
-)
-REDACTED = "[REDACTED]"
-
 
 def _redact(value: Any) -> Any:
-    """Sustituye recursivamente los valores de claves sensibles.
-
-    La traza se guarda para auditar el razonamiento del agente, no para
-    conservar credenciales. Un payload con el token de aprobación HITL o una
-    API key no puede sobrevivir a esa frontera.
-    """
-    if isinstance(value, dict):
-        return {
-            key: (REDACTED if _is_secret_key(key) else _redact(item)) for key, item in value.items()
-        }
-    if isinstance(value, (list, tuple)):
-        return [_redact(item) for item in value]
-    return value
-
-
-def _is_secret_key(key: Any) -> bool:
-    lowered = str(key).lower()
-    return any(marker in lowered for marker in _SECRET_MARKERS)
-
-
-def _validate_run_id(run_id: str) -> None:
-    if not _RUN_ID.fullmatch(run_id) or run_id in {".", ".."}:
-        raise ValueError(f"run_id inválido: {run_id!r}")
+    """Valores sensibles por nombre de clave y por contenido."""
+    return redact_value(value)
 
 
 def traces_dir() -> Path:
     """Directorio de trazas: `LOGLENS_TRACES_DIR` o `traces/` en el cwd."""
-    return Path(os.environ.get("LOGLENS_TRACES_DIR", DEFAULT_TRACES_DIR))
+    return Path(os.environ.get(TRACES_ENV_VAR, DEFAULT_TRACES_DIR))
 
 
 class TraceRecorder:
     """Escribe una línea JSON por evento. Se puede usar como context manager."""
 
     def __init__(self, run_id: str, directory: str | Path | None = None) -> None:
-        _validate_run_id(run_id)
+        validate_run_id(run_id)
         self.run_id = run_id
         self.directory = Path(directory) if directory is not None else traces_dir()
         ensure_private_dir(self.directory)
@@ -100,7 +62,8 @@ class TraceRecorder:
             "kind": kind,
             **_redact(payload),
         }
-        self._handle.write(json.dumps(line, ensure_ascii=False, default=str) + "\n")
+        serialized = json.dumps(line, ensure_ascii=False, default=str)
+        self._handle.write(redact_text(serialized) + "\n")
         self._handle.flush()
 
     def close(self) -> None:
@@ -118,7 +81,7 @@ def record_run(run: AgentRun) -> None:
     if run.plan is None:
         plan_json = None
     else:
-        plan_json = json.dumps(run.plan.model_dump(), ensure_ascii=False)
+        plan_json = redact_text(json.dumps(run.plan.model_dump(), ensure_ascii=False))
     with write_connection() as conn:
         conn.execute(
             """
@@ -141,7 +104,7 @@ def record_run(run: AgentRun) -> None:
             """,
             (
                 run.run_id,
-                run.symptom,
+                redact_text(run.symptom),
                 run.status,
                 to_canonical(datetime.now(UTC)),
                 to_canonical(datetime.now(UTC)) if run.status != "RUNNING" else None,

@@ -45,6 +45,8 @@ _deltas: dict[int, Path] = {
     7: MIGRATIONS_DIR / "_007_log_files_head_hash.sql",
     8: MIGRATIONS_DIR / "_008_incident_notified_through.sql",
     9: MIGRATIONS_DIR / "_009_hitl_audit.sql",
+    10: MIGRATIONS_DIR / "_010_log_files_device.sql",
+    11: MIGRATIONS_DIR / "_011_events_fts.sql",
 }
 
 # Versiones que entrega la baseline. Debe ser exactamente los deltas cargados:
@@ -93,6 +95,31 @@ def _delta_008_already_applied(conn) -> bool:
     return True
 
 
+# DDL idempotente de `_009`, para reafirmar una migración que se quedó a medias
+# (columna añadida pero versión no registrada). Debe reflejar el SQL del delta.
+_DELTA_009_SETTLE_DDL = """
+CREATE TABLE IF NOT EXISTS hitl_audit (
+    seq         INTEGER PRIMARY KEY AUTOINCREMENT,
+    action_id   TEXT NOT NULL,
+    event       TEXT NOT NULL,
+    actor       TEXT,
+    occurred_at TEXT NOT NULL,
+    detail      TEXT,
+    FOREIGN KEY (action_id) REFERENCES agent_actions(id)
+);
+CREATE INDEX IF NOT EXISTS idx_hitl_audit_action ON hitl_audit (action_id, seq);
+CREATE TRIGGER IF NOT EXISTS trg_hitl_audit_no_update
+BEFORE UPDATE ON hitl_audit
+BEGIN
+    SELECT RAISE(ABORT, 'hitl_audit es append-only');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_hitl_audit_no_delete
+BEFORE DELETE ON hitl_audit
+BEGIN
+    SELECT RAISE(ABORT, 'hitl_audit es append-only');
+END;
+"""
+
 _DELTA_009_BACKFILL = """
 UPDATE agent_actions
    SET rejected_at = approved_at, rejected_by = approved_by
@@ -128,17 +155,84 @@ SELECT id, 'EXECUTED', NULL, executed_at, tool FROM agent_actions
 
 
 def _delta_009_already_applied(conn) -> bool:
-    """True si `_009` ya creó las columnas y la tabla de auditoría.
+    """Reafirma `_009` si dejó algún efecto, y devuelve si debe saltarse.
 
-    `ALTER TABLE ... ADD COLUMN` falla si el DDL se aplicó pero la versión no
-    llegó a registrarse. El backfill se reafirma porque es idempotente.
+    Basta con que exista una de las dos columnas o la tabla para concluir que el
+    script corrió: comprobar sólo `rejected_by` dejaba atascada una base cuyo
+    primer `ALTER` (`rejected_at`) se aplicó y el segundo no. Las piezas que
+    falten se crean aquí; el backfill es idempotente y se reafirma siempre.
     """
-    if not _column_exists(conn, "agent_actions", "rejected_by"):
+    has_at = _column_exists(conn, "agent_actions", "rejected_at")
+    has_by = _column_exists(conn, "agent_actions", "rejected_by")
+    has_table = _table_exists(conn, "hitl_audit")
+    if not (has_at or has_by or has_table):
         return False
-    if not _table_exists(conn, "hitl_audit"):
-        return False
-    conn.executescript(_DELTA_009_BACKFILL)
+    if not has_at:
+        conn.execute("ALTER TABLE agent_actions ADD COLUMN rejected_at TEXT")
+    if not has_by:
+        conn.execute("ALTER TABLE agent_actions ADD COLUMN rejected_by TEXT")
+    conn.executescript(_DELTA_009_SETTLE_DDL + _DELTA_009_BACKFILL)
     return True
+
+
+def _unique_columns(conn, table: str) -> list[list[str]]:
+    """Columnas de cada UNIQUE declarado en `table` (no de índices normales)."""
+    result: list[list[str]] = []
+    for idx in conn.execute(f"PRAGMA index_list({table})"):
+        if idx["origin"] != "u":
+            continue
+        result.append(
+            [
+                str(row["name"])
+                for row in conn.execute(f'PRAGMA index_info("{idx["name"]}")')
+                if row["name"] is not None
+            ]
+        )
+    return result
+
+
+def _delta_010_already_applied(conn) -> bool:
+    """Reafirma `_010` si dejó algún efecto, y devuelve si debe saltarse.
+
+    Mirar sólo la columna `dev` dejaría atascada una base a la que se le añadió
+    la columna pero no se reconstruyó la UNIQUE: seguiría identificando archivos
+    por `(inode, generation)` y perdería líneas entre devices. Por eso se vigilan
+    las tres piezas —columna, tabla transitoria y clave— y cualquier estado
+    parcial se recompone ejecutando el **mismo** script del delta, que es
+    idempotente y lleva su propio BEGIN/COMMIT. El estado completo no se toca:
+    reconstruir de nuevo pondría a 0 los `dev` reales que la ingesta ya asignó.
+    """
+    has_dev = _column_exists(conn, "log_files", "dev")
+    has_transient = _table_exists(conn, "log_files_v10")
+    if has_dev and ["dev", "inode", "generation"] in _unique_columns(conn, "log_files"):
+        if not has_transient:
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_log_files_path ON log_files (path)")
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_log_files_active ON log_files (is_active, path)"
+            )
+            return True
+    if not (has_dev or has_transient):
+        return False
+    # executescript() hace un COMMIT implícito antes de correr: la atomicidad la
+    # declara el propio script (BEGIN/COMMIT), igual que en `_002` y `_009`.
+    conn.executescript(_deltas[10].read_text(encoding="utf-8"))
+    return True
+
+
+def _delta_011_already_applied(conn) -> bool:
+    """Salta la FTS donde no hay `events` y reafirma un aplicación parcial.
+
+    Los tests aislados de HITL construyen bases sintéticas sin tabla `events`:
+    el delta no puede crear triggers sobre una tabla inexistente, pero la versión
+    sí debe quedar registrada. Si la FTS ya está creada, el script es idempotente
+    y se reejecuta para recuperar un fallo entre el DDL y el `_record`.
+    """
+    if not _table_exists(conn, "events"):
+        return True
+    if _table_exists(conn, "events_fts"):
+        conn.executescript(_deltas[11].read_text(encoding="utf-8"))
+        return True
+    return False
 
 
 # Deltas que no son re-ejecutables en SQL puro. El guard detecta si el efecto ya
@@ -148,6 +242,8 @@ _DELTA_GUARDS: dict[int, Callable[[sqlite3.Connection], bool]] = {
     7: _delta_007_already_applied,
     8: _delta_008_already_applied,
     9: _delta_009_already_applied,
+    10: _delta_010_already_applied,
+    11: _delta_011_already_applied,
 }
 
 

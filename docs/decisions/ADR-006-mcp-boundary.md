@@ -53,7 +53,7 @@ tenga que traducir a su propio formato.
 **En contra:**
 
 - El SDK está en v2 y es reciente (v2.0.0 salió en julio 2026). Hay churn. Se
-  mitiga con `mcp>=2.3,<3` y con el aislamiento en `_sdk.py`.
+  mitiga con el pin exacto `mcp==2.3.0` y con el aislamiento en `_sdk.py`.
 - `FastMCP` fue renombrado a `MCPServer`: el código publicado en blogs de 2025 usa
   la API vieja. Hay que seguir la doc actual.
 - No todos los clientes MCP son iguales en capacidades (elicitation, roots,

@@ -112,6 +112,10 @@ def _manage(incidents: list[dict]) -> None:
     manage_ok = confirm.typed_confirmation(st, word="CONFIRMAR", key="confirm_incident_status")
 
     left, middle, right = st.columns(3)
+    # `current` viene del snapshot con TTL de la caché: otra pestaña, la tool
+    # MCP o el detector pueden haber movido el estado mientras tanto. El CAS
+    # con expected_status evita que este clic pise ese cambio; el audit sólo
+    # se escribe si la transición se aplicó de verdad.
     if left.button(
         "Reconocer (ACK)",
         width="stretch",
@@ -119,8 +123,9 @@ def _manage(incidents: list[dict]) -> None:
         help="Marca el incidente como visto sin cerrarlo.",
     ):
         with connection() as conn:
-            set_incident_status(conn, chosen, "ACKNOWLEDGED")
-        audit.record("incident.status", incident_id=chosen, status="ACKNOWLEDGED")
+            changed = set_incident_status(conn, chosen, "ACKNOWLEDGED", expected_status=current)
+        if changed:
+            audit.record("incident.status", incident_id=chosen, status="ACKNOWLEDGED")
         cache.clear_caches()
         st.rerun()
     if middle.button(
@@ -130,8 +135,9 @@ def _manage(incidents: list[dict]) -> None:
         help="Cierra el incidente. Un rebrote posterior lo reabrirá como nuevo.",
     ):
         with connection() as conn:
-            set_incident_status(conn, chosen, "RESOLVED")
-        audit.record("incident.status", incident_id=chosen, status="RESOLVED")
+            changed = set_incident_status(conn, chosen, "RESOLVED", expected_status=current)
+        if changed:
+            audit.record("incident.status", incident_id=chosen, status="RESOLVED")
         cache.clear_caches()
         st.rerun()
     if right.button(
@@ -141,8 +147,9 @@ def _manage(incidents: list[dict]) -> None:
         help="Reabre y reinicia el cooldown: la próxima ocurrencia vuelve a notificar.",
     ):
         with connection() as conn:
-            set_incident_status(conn, chosen, "OPEN")
-        audit.record("incident.status", incident_id=chosen, status="OPEN")
+            changed = set_incident_status(conn, chosen, "OPEN", expected_status=current)
+        if changed:
+            audit.record("incident.status", incident_id=chosen, status="OPEN")
         cache.clear_caches()
         st.rerun()
 

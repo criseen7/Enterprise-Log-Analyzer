@@ -6,7 +6,7 @@ MCP_HOST ?= 127.0.0.1
 
 .DEFAULT_GOAL := help
 
-.PHONY: help check install migrate migrate-status test test-verbose check-db seed demo dashboard dashboard-admin mcp mcp-http tools investigate eval-smoke eval-full clean reset-db fmt lint docker-build docker-up docker-down docker-logs
+.PHONY: help check install env-example migrate migrate-status test test-verbose check-db seed demo dashboard dashboard-admin mcp mcp-http tools investigate eval-smoke eval-full clean reset-db fmt lint docker-build docker-up docker-down docker-logs
 
 help: ## Muestra esta ayuda
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -14,8 +14,11 @@ help: ## Muestra esta ayuda
 
 install: ## Crea el venv e instala dependencias
 	$(PYTHON) -m venv $(VENV)
-	$(VENV)/bin/pip install --upgrade pip
+	$(VENV)/bin/pip install pip==26.3
 	$(VENV)/bin/pip install -r requirements.txt -r requirements-dev.txt
+
+env-example: ## Regenera .env.example desde la metadata de configuración
+	$(PY) tools/generate_env_example.py
 
 migrate: ## Crea/actualiza la base de datos
 	$(PY) -m app.db.migrations

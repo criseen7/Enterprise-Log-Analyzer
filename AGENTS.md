@@ -28,7 +28,7 @@ agent would likely get wrong without help.
 | Analysis | `python -m app.analysis [--top N --hourly --anomalies --patterns --backfill]` |
 | Alerts CLI | `python -m app.alerts [--list --status OPEN --export csv --window 60 --no-evaluate]` |
 | Dashboard | `streamlit run app/ui/app.py` |
-| Docker up/down | `make docker-up` · `make docker-down` (analyzer + dashboard) |
+| Docker up/down | `make docker-up` · `make docker-down` (analyzer + dashboard + mcp) |
 
 Always run the suite with `.venv/bin/python`; `pytest` also works but the
 dashboard smoke tests are skipped without Streamlit.
@@ -37,11 +37,13 @@ dashboard smoke tests are skipped without Streamlit.
 
 - Entrypoints: `app/ui/app.py` (dashboard), `app/ingest/`, `app/analysis/`,
   `app/alerts/` (each has a `__main__.py` CLI).
-- **Docker (Fase 6):** two services — `analyzer` (`python -m app.ingest --watch`,
-  sole writer) and `dashboard` (`streamlit run app/ui/app.py`). `logs` is a
-  read-only bind mount; `ela-data`/`ela-exports` are named volumes (survive
-  `down`/`build`). `dashboard` `depends_on: service_healthy` so only one process
-  applies the schema baseline. Paths come from `ELA_*` env (`/data/app.db`, etc.).
+- **Docker (Fase 6):** three services — `analyzer` (`python -m app.ingest --watch`,
+  sole writer), `dashboard` (`streamlit run app/ui/app.py`) and `mcp` (agent
+  boundary). `logs` is a read-only bind mount; `ela-data`/`ela-exports`/
+  `loglens-traces` are named volumes (survive `down`/`build`). `dashboard` and
+  `mcp` `depends_on: service_healthy` so only one process applies the schema
+  baseline. Paths come from `ELA_*` env (`/data/app.db`, etc.); `.env.example` is
+  generated from the config metadata with `make env-example`.
 - **Ingest identity is `(inode, generation)`, not path** (`app/db/repository.py`).
   `UNIQUE(path)` breaks on `copytruncate`/rotation (ADR-003).
 - **Ingest order matters:** resolve → read → insert → then advance `last_offset`.

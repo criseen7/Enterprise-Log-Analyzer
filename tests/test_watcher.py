@@ -103,11 +103,12 @@ class SymlinkTests(TempDbTestCase):
 
         conocidos = _known_files(self.settings())
 
-        self.assertEqual(conocidos, {outside.resolve()})
-        self.assertEqual(
+        # Un symlink en `logs/` podría apuntar a cualquier fichero legible del
+        # host; ni `discover()` ni el watcher lo aceptan como archivo ingerible.
+        self.assertEqual(conocidos, set())
+        self.assertIsNone(
             _match_known(str(link), conocidos),
-            outside.resolve(),
-            "el symlink se resuelve y coincide con lo que ingiere `discover()`",
+            "el objetivo del symlink no está en la lista de archivos ingeribles",
         )
 
 

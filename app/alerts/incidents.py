@@ -85,32 +85,60 @@ def get_incident(conn: sqlite3.Connection, incident_id: int) -> sqlite3.Row | No
     ).fetchone()
 
 
-def set_incident_status(conn: sqlite3.Connection, incident_id: int, status: str) -> bool:
-    """Mueve un incidente de estado. Devuelve si existía.
+def set_incident_status(
+    conn: sqlite3.Connection,
+    incident_id: int,
+    status: str,
+    *,
+    expected_status: str | None = None,
+) -> bool:
+    """Mueve un incidente de estado. Devuelve si la transición se aplicó.
+
+    La transición es compare-and-swap: el `UPDATE` exige que la fila siga en el
+    estado esperado y se comprueba `rowcount`. Sin ese guard, dos actores que
+    leyeron el mismo snapshot se pisarían: un ACK tardío podría borrar un
+    `RESOLVED` reciente. `expected_status` es el estado que vio el llamador; si
+    se omite, se toma el de la lectura, que también evita sobrescrituras
+    accidentales aunque no detecta un snapshot viejo.
 
     Reabrir (`RESOLVED` -> `OPEN`) reinicia `notified_at` a NULL a propósito: un
     incidente reabierto es un incidente nuevo para el cooldown. Sin eso, el
     primer rebrote queda silenciado por la notificación anterior y el incidente
     aparece abierto sin haberse avisado. `notified_through` no se toca: reabrir
-    a mano no convierte los eventos viejos en una ocurrencia nueva.
+    a mano no convierte los eventos viejos en una ocurrencia nueva. Un CAS
+    fallido no reinicia nada: devuelve `False` antes de tocar la fila.
     """
     if status not in VALID_STATUSES:
         raise ValueError(f"status inválido: {status!r}, esperado uno de {VALID_STATUSES}")
+    if expected_status is not None and expected_status not in VALID_STATUSES:
+        raise ValueError(
+            f"expected_status inválido: {expected_status!r}, esperado uno de {VALID_STATUSES}"
+        )
     row = get_incident(conn, incident_id)
     if row is None:
         return False
-    if status == "OPEN" and row["status"] != "OPEN":
-        conn.execute(
-            "UPDATE incidents SET status = ?, notified_at = NULL WHERE id = ?",
-            (status, incident_id),
+    current = row["status"]
+    if expected_status is not None and current != expected_status:
+        return False
+    if status == "OPEN" and current != "OPEN":
+        cursor = conn.execute(
+            "UPDATE incidents SET status = ?, notified_at = NULL WHERE id = ? AND status = ?",
+            (status, incident_id, current),
         )
     else:
-        conn.execute("UPDATE incidents SET status = ? WHERE id = ?", (status, incident_id))
-    return True
+        cursor = conn.execute(
+            "UPDATE incidents SET status = ? WHERE id = ? AND status = ?",
+            (status, incident_id, current),
+        )
+    return cursor.rowcount == 1
 
 
 def set_incident_status_by_fingerprint(
-    conn: sqlite3.Connection, fingerprint: str, status: str
+    conn: sqlite3.Connection,
+    fingerprint: str,
+    status: str,
+    *,
+    expected_status: str | None = None,
 ) -> bool:
     """Igual que `set_incident_status`, pero por huella.
 
@@ -120,7 +148,7 @@ def set_incident_status_by_fingerprint(
     row = conn.execute("SELECT id FROM incidents WHERE fingerprint = ?", (fingerprint,)).fetchone()
     if row is None:
         return False
-    return set_incident_status(conn, int(row["id"]), status)
+    return set_incident_status(conn, int(row["id"]), status, expected_status=expected_status)
 
 
 __all__ = [

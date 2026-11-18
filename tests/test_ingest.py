@@ -57,7 +57,38 @@ class IngestBase(TempDbTestCase):
         return [r[0] for r in self.conn.execute("SELECT message FROM events ORDER BY offset")]
 
 
+class SymlinkTests(IngestBase):
+    def test_un_symlink_en_logs_no_se_ingiere(self):
+        fuera = self.root / "secreto.txt"
+        fuera.write_text(JSON.format(n=1), encoding="utf-8")
+        enlace = self.log_dir / "app.log"
+        try:
+            os.symlink(fuera, enlace)
+        except (OSError, NotImplementedError):
+            self.skipTest("el sistema no admite symlinks")
+
+        result = ingest_file(self.conn, enlace, self.registry)
+        self.assertEqual(result.status, "error")
+        self.assertEqual(count_events(self.conn), 0)
+
+    def test_log_files_excluye_symlinks(self):
+        real = self.write_log("app.log", [JSON.format(n=1)])
+        try:
+            os.symlink(real, self.log_dir / "copia.log")
+        except (OSError, NotImplementedError):
+            self.skipTest("el sistema no admite symlinks")
+        self.assertEqual(self.settings().log_files, [real])
+
+
 class IdempotenciaTest(IngestBase):
+    def test_el_conteo_no_incluye_las_escrituras_de_los_triggers_fts(self):
+        """H-23: `total_changes` contaría también las tablas sombra de FTS5."""
+        self.append(WLS.format(n=1))
+        result = ingest_file(self.conn, self.log, self.registry)
+        self.assertEqual(result.counts.inserted, 1)
+        self.assertEqual(result.counts.skipped, 0)
+        self.assertEqual(count_events(self.conn), 1)
+
     def test_dos_pasadas_no_duplican(self):
         self.append(WLS.format(n=1))
         first = ingest_file(self.conn, self.log, self.registry)
@@ -641,6 +672,132 @@ class StatusCliTest(TempDbTestCase):
         self.assertEqual(code, 0)
         self.assertIn("sin migrar", out.getvalue())
         self.assertFalse(self.db_path.exists(), "--status es de solo lectura")
+
+
+class HealthyCliTest(TempDbTestCase):
+    migrate_db = False
+
+    def _config(self) -> Path:
+        config = self.root / "config.yaml"
+        config.write_text(
+            "paths:\n"
+            f"  log_dir: {self.log_dir}\n"
+            f"  db_path: {self.db_path}\n"
+            f"  export_dir: {self.export_dir}\n",
+            encoding="utf-8",
+        )
+        return config
+
+    def _check(self) -> tuple[int, str]:
+        from contextlib import redirect_stdout
+
+        from app.ingest.__main__ import main as ingest_main
+
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = ingest_main(["--healthy", "--config", str(self._config())])
+        return code, out.getvalue()
+
+    def test_base_sin_migrar_no_esta_sana(self):
+        code, text = self._check()
+        self.assertNotEqual(code, 0)
+        self.assertIn("sin migrar", text)
+
+    def test_base_migrada_esta_sana(self):
+        from app.db.migrations import migrate
+
+        migrate(self.db_path)
+        code, text = self._check()
+        self.assertEqual(code, 0)
+        self.assertIn("base lista", text)
+
+    def test_base_desactualizada_no_esta_sana(self):
+        from app.db.migrations import migrate
+
+        migrate(self.db_path, target=8)
+        code, text = self._check()
+        self.assertNotEqual(code, 0)
+        self.assertIn("desactualizada", text)
+
+    def test_healthy_no_migra_ni_crea_la_base(self):
+        self._check()
+        self.assertFalse(self.db_path.exists(), "--healthy es de solo lectura")
+
+
+class DeviceIdentityTests(IngestBase):
+    """H-01/H-05: el inode solo no identifica un archivo; hace falta el device."""
+
+    def _fstat_con_device(self, fd: int, *, dev: int, ino: int) -> os.stat_result:
+        st = os.fstat(fd)
+        return os.stat_result(
+            (
+                st.st_mode,
+                ino,
+                dev,
+                st.st_nlink,
+                st.st_uid,
+                st.st_gid,
+                st.st_size,
+                st.st_atime,
+                st.st_mtime,
+                st.st_ctime,
+            )
+        )
+
+    def test_mismo_inodo_en_device_distinto_es_archivo_nuevo(self):
+        primero = self.log_dir / "mount_a.log"
+        segundo = self.log_dir / "mount_b.log"
+        primero.write_text(WLS.format(n=1), encoding="utf-8")
+        segundo.write_text(WLS.format(n=2), encoding="utf-8")
+
+        first = ingest_file(self.conn, primero, self.registry)
+        self.assertEqual(first.reason, "new")
+        ino = os.stat(primero).st_ino
+        dev_a = os.stat(primero).st_dev
+        dev_b = dev_a + 1
+
+        # El mismo número de inodo en otro dispositivo: no es un rename ni un
+        # reciclado, es otro archivo. Sin `dev` se reutilizaba el offset y se
+        # perdía por completo la primera línea del segundo archivo.
+        with mock.patch(
+            "app.ingest.ingestor._fstat_fd",
+            side_effect=lambda fd: self._fstat_con_device(fd, dev=dev_b, ino=ino),
+        ):
+            second = ingest_file(self.conn, segundo, self.registry)
+
+        self.assertEqual(second.reason, "new")
+        self.assertEqual(second.counts.inserted, 1)
+        self.assertEqual(count_events(self.conn), 2)
+        filas = self.conn.execute(
+            "SELECT dev, inode, generation FROM log_files ORDER BY id"
+        ).fetchall()
+        self.assertEqual(
+            [(r["dev"], r["inode"], r["generation"]) for r in filas],
+            [(dev_a, ino, 0), (dev_b, ino, 0)],
+        )
+
+    def test_el_guard_de_progreso_rechaza_un_device_distinto(self):
+        self.append(WLS.format(n=1))
+        state = resolve_log_file(self.conn, self.log)
+        st = os.stat(self.log)
+
+        self.assertTrue(
+            update_progress(
+                self.conn, state.file_id, offset=10, size=10, inode=st.st_ino, dev=st.st_dev
+            )
+        )
+        self.assertFalse(
+            update_progress(
+                self.conn,
+                state.file_id,
+                offset=20,
+                size=20,
+                inode=st.st_ino,
+                dev=st.st_dev + 1,
+            ),
+            "un device distinto no debe avanzar el offset",
+        )
+        self.assertEqual(last_offset(self.conn, state.file_id), 10)
 
 
 if __name__ == "__main__":
