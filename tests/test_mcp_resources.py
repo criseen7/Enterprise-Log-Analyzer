@@ -151,10 +151,21 @@ class TraceResourceTests(McpTestCase):
 
         return asyncio.run(_run())
 
-    def test_una_traza_existente_se_publica_tal_cual(self):
+    def test_una_traza_existente_se_publica_en_bloque_untrusted(self):
         content = '{"kind": "run.start"}\n{"kind": "run.end"}\n'
         (self.traces / "run-abc.jsonl").write_text(content, encoding="utf-8")
-        self.assertEqual(self._read("loglens://trace/run-abc"), content)
+        result = self._read("loglens://trace/run-abc")
+        self.assertTrue(result.startswith('<trace trust="untrusted-agent-output">'))
+        self.assertTrue(result.endswith("</trace>"))
+        self.assertIn('{"kind": "run.start"}', result)
+        self.assertIn('{"kind": "run.end"}', result)
+
+    def test_la_traza_servida_redacta_secretos_por_valor(self):
+        content = '{"kind": "run.end", "root_cause": "Bearer sk-ant-FILTRADO"}\n'
+        (self.traces / "run-redact.jsonl").write_text(content, encoding="utf-8")
+        result = self._read("loglens://trace/run-redact")
+        self.assertNotIn("sk-ant-FILTRADO", result)
+        self.assertIn("[REDACTED]", result)
 
     def test_una_traza_inexistente_es_un_error(self):
         with self.assertRaises(Exception) as ctx:

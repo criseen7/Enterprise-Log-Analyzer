@@ -24,6 +24,7 @@ from app.agent.llm import LLMClient, LLMResponse, LLMUnavailable
 from app.agent.promptfiles import load_rendered
 from app.mcp.server import build_server
 from app.timeutil import parse_utc, to_canonical
+from app.trust import untrusted_block
 
 # Sólo las tools de lectura pueden aparecer en un plan. La mutación no se
 # planifica: se propone y pasa por aprobación humana (ver `loop.py`).
@@ -259,7 +260,9 @@ def llm_plan(
         max_steps=max_steps,
     )
     if feedback:
-        prompt += f"\n\nEl intento anterior falló y hay que corregirlo:\n{feedback}\n"
+        prompt += "\n\nEl intento anterior falló y hay que corregirlo:\n"
+        prompt += untrusted_block("feedback", "untrusted-llm-derived", feedback)
+        prompt += "\n"
 
     response = llm.complete(
         [{"role": "user", "content": prompt}],

@@ -24,6 +24,7 @@ from app.analysis.errors import ErrorRules
 from app.mcp.tools.incidents import get_incident
 from app.run_id import validate_run_id
 from app.securefs import open_read_no_follow
+from app.trust import MAX_TRACE_CHARS, redact_text, untrusted_block
 
 SCHEMA_URI = "loglens://schema"
 RULES_URI = "loglens://rules"
@@ -213,7 +214,10 @@ def trace_resource(run_id: str) -> str:
         raise ResourceError(f"traza no legible: {exc}") from exc
     try:
         with os.fdopen(descriptor, "r", encoding="utf-8", closefd=False) as handle:
-            return handle.read()
+            content = redact_text(handle.read())
+        # La traza contiene salidas del modelo y texto copiado de logs: vuelve
+        # al contexto como dato, nunca como instrucciones.
+        return untrusted_block("trace", "untrusted-agent-output", content, limit=MAX_TRACE_CHARS)
     finally:
         os.close(descriptor)
 
