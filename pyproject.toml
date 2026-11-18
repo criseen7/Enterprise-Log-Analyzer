@@ -44,7 +44,7 @@ dashboard = [
 ]
 dev = [
     "pytest==9.2.0",
-    "ruff==0.17.2",
+    "ruff==0.17.5",
     "mypy==2.4.0",
 ]
 # La capa agentic es opcional: sin el extra, el planner heurístico y el
